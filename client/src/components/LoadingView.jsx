@@ -5,7 +5,7 @@ export default function LoadingView() {
       {/* Duży animowany wskaźnik ładowania */}
       <div className="spinner spinner-large glowing-text-cyan"></div>
       <div style={{ fontSize: "16px", color: "var(--text-secondary)", fontWeight: "500" }}>
-        Inicjalizacja Panelu Projekt AI...
+        Inicjalizacja Panelu...
       </div>
     </div>
   );
