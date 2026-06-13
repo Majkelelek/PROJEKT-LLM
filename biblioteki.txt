@@ -27,6 +27,11 @@ Niniejszy plik zawiera szczegółowy opis architektury systemu NeuroBench AI, ws
   * **`globals`** – Zestaw globalnych definicji środowiskowych (np. obiekty `window`, `document`) dla ESLint.
   * **`@types/react`** / **`@types/react-dom`** – Definicje typów poprawiające podpowiedzi składni w edytorze kodu.
 
+### C. INNE PLIKI PROJEKTU (Główny katalog)
+* **`.gitignore`**
+  * **Ścieżka:** `.gitignore`
+  * **Opis:** Zunifikowany, główny plik ignorowania systemu Git. Wyklucza z wersjonowania foldery kompilacji .NET (`bin/`, `obj/`), lokalne zależności Node (`node_modules/`), pliki lokalnych zmiennych środowiskowych (`.env.*`), logi błędów oraz foldery konfiguracyjne edytorów (VS Code `.vscode/`, Visual Studio `.vs/`, JetBrains `.idea/`).
+
 ---
 
 ## 2. STRUKTURA PLIKÓW BACKENDU (ASP.NET Core)
@@ -85,29 +90,25 @@ Niniejszy plik zawiera szczegółowy opis architektury systemu NeuroBench AI, ws
   ```
 * **Opis:** Klient łączący się z lokalnym API Ollama (`http://localhost:11434`). Odpytuje o status serwisu, pobiera listę modeli (`/api/tags`), przeprowadza test wnioskowania benchmarkowego (`/api/generate`) oraz odpowiada za wygenerowanie pełnego raportu eksperckiego z analizą kompatybilności sprzętowej.
 
-### D. DbService.cs
-* **Ścieżka:** `server/Services/DbService.cs`
-* **Importy (`using`):**
-  ```csharp
-  using System;
-  using System.Collections.Generic;
-  using System.IO;
-  using System.Linq;
-  using System.Text.Json;
-  using Microsoft.Extensions.Logging;
-  using NeuroBench.Backend.Models;
-  ```
-* **Opis:** Silnik bazy danych operujący na pliku płaskim JSON. Odpowiada za odczyt, dodawanie, usuwanie i zapis rekordów testów. Obsługuje także automatyczną migrację logów ze starego backendu Pythona.
+### D. Modele Danych (DTO)
+* **Ścieżka:** `server/Models/`
+* **Opis:** Zestaw zdywersyfikowanych klas modeli C# (DTO) odwzorowujących struktury danych przesyłanych i zapisywanych w systemie:
+  * **`SystemSpecs.cs`** — Przetrzymuje pełną statyczną specyfikację podzespołów komputera (CPU, RAM, GPU, wersje OS).
+  * **`GpuDetail.cs`** — Reprezentuje szczegółowe parametry układów graficznych (nazwa, VRAM).
+  * **`LiveMetrics.cs`** — Służy do transmitowania dynamicznych metryk wydajności (zużycie procesora na rdzeń, użycie pamięci RAM).
+  * **`OllamaResult.cs`** — Przechowuje szczegółowe statystyki wnioskowania LLM (Tokens per second, TTFT, odpowiedź).
+  * **`BenchmarkResults.cs`** — Agreguje wyniki wszystkich testów (tutaj: podklucze dla Ollama).
+  * **`BenchmarkRun.cs`** — Reprezentuje kompletny rekord sesji testowej (specyfikacje + wyniki + wygenerowany raport AI + parametry promptu).
+  * **`RunBenchmarkRequest.cs`** — Model wejściowy dla żądania uruchomienia benchmarku.
+  * **`ChatRequestMessage.cs`** i **`ChatRequest.cs`** — Reprezentują strukturę sesji konwersacyjnej z ekspertem sprzętowym.
 
-### E. BenchmarkModels.cs
-* **Ścieżka:** `server/Models/BenchmarkModels.cs`
-* **Importy (`using`):**
-  ```csharp
-  using System;
-  using System.Collections.Generic;
-  using System.Text.Json.Serialization;
-  ```
-* **Opis:** Klasy modeli C# (DTO) odwzorowujące struktury danych przesyłanych i zapisywanych w systemie (np. `BenchmarkRun`, `OllamaResult`, `SystemSpecs`, `LiveMetrics`).
+* **Po co są te modele (Rola i Przeznaczenie):**
+  1. **Typowanie strukturalne (kontrakt danych):** Wymiana danych między backendem (.NET Core), frontendem (React) oraz lokalną usługą Ollama odbywa się w formacie JSON. Modele te stanowią formalny kontrakt określający właściwości, typy i klucze (dzięki atrybutom `[JsonPropertyName]`). Zapewnia to bezpieczną i bezbłędną serializację (z obiektów C# do JSON) oraz deserializację (z JSON do obiektów C#).
+  2. **Architektura DTO (Data Transfer Object):** Zapobiegają mieszaniu logiki systemowej (np. usług pomiarowych `SystemInfoService`) z strukturą danych przesyłanych przez API. Reprezentują one czysty stan danych gotowy do przesłania przez sieć.
+  3. **Separacja do osobnych plików (Zasada Jednej Odpowiedzialności - SOLID):** Rozbicie jednego pliku na indywidualne pliki klasowe jest standardem w profesjonalnym programowaniu C#:
+     - **Wyszukiwanie i czytelność:** Ułatwia szybką nawigację w strukturze folderu `Models/`.
+     - **Bezpieczeństwo zmian:** Modyfikacja jednego modelu (np. dodanie pola do `SystemSpecs.cs`) nie wpływa na kod innych klas, eliminując ryzyko przypadkowych błędów kompilacji.
+     - **Modularność:** Pozwala na czystą kontrolę wersji Git (brak konfliktów przy edycji różnych modeli w tym samym czasie).
 
 ---
 
