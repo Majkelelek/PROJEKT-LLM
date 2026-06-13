@@ -1,38 +1,38 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import CompatibilityPanel from "./CompatibilityPanel";
 
+// Komponent panelu testowego (BenchmarkPanel) umożliwiający uruchomienie testu wydajności Ollama z wizualizacją logów w konsoli.
 export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComplete }) {
-  // Nazwa wybranego modelu z listy rozwijanej
-  const [selectedModel, setSelectedModel] = useState("");
-  const [complexity, setComplexity] = useState("medium"); // "quick", "medium", "complex"
+  // --- Stany konfiguracji testu ---
+  const [selectedModel, setSelectedModel] = useState(""); // Wybrany model LLM
+  const [complexity, setComplexity] = useState("medium"); // Poziom złożoności testu ("quick", "medium", "complex")
   
-  // Stany powiązane z procesem uruchomienia testu wydajności
-  const [running, setRunning] = useState(false);               // Czy benchmark aktualnie trwa
-  const [progress, setProgress] = useState(0);                 // Postęp testu (0-100%)
-  const [statusMessage, setStatusMessage] = useState("Configure and run benchmarks below."); // Status u dołu konsoli
-  const [consoleLogs, setConsoleLogs] = useState([]);          // Tablica przechowująca linie wypisywane w wirtualnym terminalu
-  const [runResult, setRunResult] = useState(null);            // Ostatnio zapisane wyniki i wygenerowany raport
+  // --- Stany wykonania testu ---
+  const [running, setRunning] = useState(false); // Czy test jest w toku
+  const [progress, setProgress] = useState(0); // Procentowy stan postępu testu (0-100)
+  const [statusMessage, setStatusMessage] = useState("Skonfiguruj i uruchom testy poniżej."); // Tekst statusowy pod paskiem postępu
+  const [consoleLogs, setConsoleLogs] = useState([]); // Logi wypisywane w czarnej konsoli wirtualnej
+  const [runResult, setRunResult] = useState(null); // Rezultat ostatnio ukończonego testu
   
-  // Referencja do automatycznego scrollowania konsoli na dół
+  // Referencja do kontenera logów konsoli
   const consoleEndRef = useRef(null);
 
-  // Efekt ustawiający domyślny model po załadowaniu listy z backendu
+  // Domyślny wybór modelu na starcie (preferujemy llama3 jeśli istnieje na liście)
   useEffect(() => {
     if (ollamaActive && models.length > 0 && !selectedModel) {
-      // Domyślnie preferujemy rodzinę modeli llama3, jeśli jest pobrana, w przeciwnym wypadku pierwszy z listy
       const defaultModel = models.find(m => m.includes("llama3")) || models[0];
       setSelectedModel(defaultModel);
     }
-  }, [ollamaActive, models]);
+  }, [ollamaActive, models, selectedModel]);
 
-  // Efekt wymuszający przewinięcie widoku konsoli po dodaniu nowej linii logu
+  // Efekt automatycznego scrollowania konsoli do najnowszej linii logów
   useEffect(() => {
     if (consoleEndRef.current) {
       consoleEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [consoleLogs]);
 
-  // Funkcja wywołująca benchmark i przetwarzająca strumieniową odpowiedź SSE z backendu
+  // Funkcja wywołująca asynchronicznie backend i parsująca strumień Server-Sent Events (SSE)
   const runBenchmarks = async () => {
     setRunning(true);
     setProgress(0);
@@ -41,7 +41,7 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
     setStatusMessage("Test wydajności LLM rozpoczęty...");
 
     try {
-      // Wywołanie endpointu POST zwracającego strumień EventStream
+      // Wysłanie zapytania POST w celu zainicjowania strumieniowania SSE
       const response = await fetch("http://127.0.0.1:8000/api/benchmark/run-stream", {
         method: "POST",
         headers: {
@@ -55,10 +55,10 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
       });
 
       if (!response.ok) {
-        throw new Error(`Server returned HTTP ${response.status}`);
+        throw new Error(`Serwer zwrócił kod HTTP ${response.status}`);
       }
 
-      // Odczytywanie strumienia danych binarnych
+      // Odczyt strumienia odpowiedzi HTTP
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -67,24 +67,23 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
         const { value, done } = await reader.read();
         if (done) break;
 
-        // Dekodowanie kawałka danych i dzielenie na kompletne linie wg specyfikacji SSE (\n\n)
+        // Łączenie odebranego bufora z nowo zdekodowanymi danymi i podział na linie SSE
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n\n");
-        // Przetrzymujemy ewentualną niedokończoną linię w buforze
-        buffer = lines.pop() || "";
+        buffer = lines.pop() || ""; // Pozostawienie ewentualnej niepełnej linii na koniec w buforze
 
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed || !trimmed.startsWith("data: ")) continue;
 
           try {
-            // Parsowanie właściwego obiektu JSON przesyłanego w zdarzeniu
+            // Parsowanie obiektu payload z linii "data: {JSON}"
             const payload = JSON.parse(trimmed.substring(6));
             
-            // Wypisywanie wiadomości diagnostycznych do konsoli deweloperskiej w UI
+            // Logowanie komunikatów z postępu
             if (payload.message) {
               const isSystem = payload.step.includes("error") || payload.step.includes("warning") || payload.step === "finished";
-              setConsoleLogs(prev => [...prev, `${isSystem ? "[SYSTEM]" : "[RUNNER]"} ${payload.message}`]);
+              setConsoleLogs(prev => [...prev, `${isSystem ? "[SYSTEM]" : "[URUCHAMIACZ]"} ${payload.message}`]);
               setStatusMessage(payload.message);
             }
 
@@ -93,18 +92,18 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
               setProgress(payload.progress);
             }
 
-            // Zapisanie finalnego wyniku po pomyślnym zakończeniu strumieniowania
+            // Obsługa zakończenia testu i zapisania pełnych danych wynikowych
             if (payload.status === "completed" && payload.run) {
               setRunResult(payload.run);
               onBenchmarkComplete(payload.run);
             }
           } catch (err) {
-            console.error("Error parsing JSON line:", err, trimmed);
+            console.error("Błąd parsowania linii JSON:", err, trimmed);
           }
         }
       }
     } catch (err) {
-      console.error("Benchmarking failed:", err);
+      console.error("Uruchomienie benchmarku zakończone niepowodzeniem:", err);
       setConsoleLogs(prev => [...prev, `[BŁĄD] Wykonanie testów nie powiodło się: ${err.message}`]);
       setStatusMessage("Błąd podczas wykonywania testów.");
       setProgress(100);
@@ -118,7 +117,7 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
       
       <div className="benchmark-layout">
         
-        {/* Lewy panel boczny: Konfiguracja i wybór modelu */}
+        {/* Lewa kolumna: Konfiguracja i wybór modelu */}
         <div className="benchmark-controls-card glass-panel">
           <h3 style={{ fontSize: "18px", fontWeight: "700", borderBottom: "1px solid var(--border-color)", paddingBottom: "12px" }}>
             Konfiguracja testu LLM
@@ -134,7 +133,7 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
             </div>
           </div>
 
-          {/* Lista rozwijana z dostępnymi modelami Ollama */}
+          {/* Wybór modelu z listy */}
           {ollamaActive && (
             <div className="control-group">
               <label className="control-label" htmlFor="model-select">Docelowy model LLM</label>
@@ -154,7 +153,7 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
             </div>
           )}
 
-          {/* Wybór złożoności pytania / testu */}
+          {/* Wybór poziomu złożoności wyjściowej */}
           <div className="control-group" style={{ marginTop: "12px" }}>
             <label className="control-label" htmlFor="complexity-select">Złożoność pytania / testu</label>
             <select
@@ -170,7 +169,7 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
             </select>
           </div>
 
-          {/* Ostrzeżenie jeśli Ollama jest offline */}
+          {/* Komunikat ostrzegawczy o wyłączonym Ollama */}
           {!ollamaActive && (
             <div style={{ borderRadius: "6px", padding: "10px", color: "var(--accent-red)", fontSize: "12px", border: "1px solid rgba(251, 113, 133, 0.2)", background: "rgba(251, 113, 133, 0.05)", display: "flex", gap: "8px", alignItems: "center", marginTop: "12px" }}>
               <span className="status-indicator offline" style={{ flexShrink: 0 }}></span>
@@ -178,7 +177,7 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
             </div>
           )}
 
-          {/* Przycisk startu */}
+          {/* Przycisk wywołujący test */}
           <button
             className="run-btn"
             onClick={runBenchmarks}
@@ -194,7 +193,7 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
           </button>
         </div>
 
-        {/* Prawy panel: Wirtualna konsola z postępem */}
+        {/* Prawa kolumna: Wirtualna konsola śledzenia logów */}
         <div className="console-card glass-panel" style={{ flexGrow: 1 }}>
           <div className="console-title">
             <span style={{ display: "inline-block", width: "10px", height: "10px", borderRadius: "50%", background: running ? "var(--accent-green)" : "var(--text-muted)", animation: running ? "spin 2s linear infinite" : "none" }}></span>
@@ -208,8 +207,8 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
             {consoleLogs.map((log, idx) => {
               let className = "console-line";
               if (log.includes("[SYSTEM]")) className += " system";
-              else if (log.includes("[ERROR]")) className += " warning";
-              else if (log.includes("complete") || log.includes("successfully")) className += " success";
+              else if (log.includes("[BŁĄD]")) className += " warning";
+              else if (log.includes("sukcesem") || log.includes("zakończony")) className += " success";
               return (
                 <div key={idx} className={className}>
                   {log}
@@ -219,7 +218,7 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
             <div ref={consoleEndRef} />
           </div>
 
-          {/* Pasek postępu procentowego */}
+          {/* Kontrolki paska postępu */}
           <div className="progress-container">
             <div className="progress-header">
               <span>{statusMessage}</span>
@@ -233,45 +232,85 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
 
       </div>
 
-      {/* Dolna sekcja: Wizualizacja parametrów wynikowych testu LLM */}
+      {/* Dolna sekcja: Wizualizacja parametrów wynikowych po zakończeniu testu */}
       {runResult && runResult.results?.ollama && !runResult.results.ollama.error && runResult.results.ollama.tokens_per_sec > 0 && (
         <div className="results-card glass-panel">
           <h3 style={{ fontSize: "20px", fontWeight: "700", marginBottom: "20px", borderBottom: "1px solid var(--border-color)", paddingBottom: "12px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span>Wyniki testu LLM</span>
+            <span>Szczegółowe wyniki testu LLM</span>
             <span style={{ fontSize: "14px", color: "var(--accent-green)", fontWeight: "normal" }}>✓ Zakończono</span>
           </h3>
 
-          <div className="results-grid" style={{ gridTemplateColumns: "1fr" }}>
-            {/* Karta testu Ollama */}
-            <div className="result-metric-card">
-              <div className="metric-header">
-                <span className="metric-header-title">🤖 Test LLM</span>
-                <span className="text-green" style={{ fontSize: "12px" }}>Zakończony pomyślnie</span>
-              </div>
-              <div className="metric-row">
-                <span className="metric-label">Model wnioskowania</span>
-                <span className="metric-value" style={{ fontSize: "12px" }}>{runResult.results.ollama.model}</span>
-              </div>
-              <div className="metric-row">
-                <span className="metric-label">Szybkość generowania</span>
-                <span className="metric-value metric-highlight">{runResult.results.ollama.tokens_per_sec} t/s</span>
-              </div>
-              <div className="metric-row">
-                <span className="metric-label">Szybkość oceny promptu</span>
-                <span className="metric-value">{runResult.results.ollama.prompt_eval_tokens_per_sec} t/s</span>
-              </div>
-              <div className="metric-row">
-                <span className="metric-label">Opóźnienie odpowiedzi (TTFT)</span>
-                <span className="metric-value">{runResult.results.ollama.latency_sec}s</span>
-              </div>
-              <div className="metric-row" style={{ borderTop: "1px dashed rgba(255,255,255,0.05)", paddingTop: "8px", marginTop: "4px" }}>
-                <span className="metric-label">Wygenerowane tokeny</span>
-                <span className="metric-value">{runResult.results.ollama.tokens_generated} tokenów</span>
-              </div>
-            </div>
+          {/* Tabela metryk — identyczny układ jak /set verbose w CLI Ollama */}
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", fontFamily: "var(--font-mono)" }}>
+              <thead>
+                <tr style={{ borderBottom: "2px solid var(--border-color)" }}>
+                  <th style={{ textAlign: "left", padding: "8px 12px", color: "var(--text-secondary)", fontWeight: "600", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.5px" }}>Parametr</th>
+                  <th style={{ textAlign: "center", padding: "8px 12px", color: "var(--text-secondary)", fontWeight: "600", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.5px" }}>Jednostka</th>
+                  <th style={{ textAlign: "right", padding: "8px 12px", color: "var(--accent-cyan)", fontWeight: "700", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.5px" }}>Wartość</th>
+                </tr>
+              </thead>
+              <tbody>
+
+                {/* ── SEKCJA 1: Ollama verbose (odpowiednik /set verbose) ── */}
+                <tr>
+                  <td colSpan="3" style={{ padding: "10px 12px 4px", color: "var(--accent-cyan)", fontSize: "11px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1px", borderTop: "1px solid var(--border-color)", background: "rgba(6, 182, 212, 0.04)" }}>
+                    🤖 Ollama — Czasy wnioskowania (verbose)
+                  </td>
+                </tr>
+                <MetricRow label="total duration (Czas całkowity)" unit="s" value={runResult.results.ollama.total_time_sec} />
+                <MetricRow label="load duration (Czas ładowania modelu)" unit="s" value={runResult.results.ollama.load_duration_sec} />
+                <MetricRow label="prompt eval count (Tokeny promptu)" unit="token" value={runResult.results.ollama.prompt_eval_count} />
+                <MetricRow label="prompt eval duration (Czas czytania promptu)" unit="s" value={runResult.results.ollama.prompt_eval_duration_sec} />
+                <MetricRow label="prompt eval rate (Szybkość czytania pytania)" unit="token/s" value={runResult.results.ollama.prompt_eval_tokens_per_sec} highlight />
+                <MetricRow label="eval count (Wygenerowane tokeny)" unit="token" value={runResult.results.ollama.tokens_generated} />
+                <MetricRow label="eval duration (Czas generowania)" unit="s" value={runResult.results.ollama.eval_duration_sec} />
+                <MetricRow label="eval rate (Szybkość generowania)" unit="token/s" value={runResult.results.ollama.tokens_per_sec} highlight />
+
+                {/* ── SEKCJA 2: GPU — nvidia-smi ── */}
+                {runResult.results.ollama.gpu_metrics_available && (
+                  <>
+                    <tr>
+                      <td colSpan="3" style={{ padding: "10px 12px 4px", color: "var(--accent-purple, #a78bfa)", fontSize: "11px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1px", borderTop: "1px solid var(--border-color)", background: "rgba(167, 139, 250, 0.04)" }}>
+                        🎮 GPU — nvidia-smi
+                      </td>
+                    </tr>
+                    <MetricRow
+                      label="Zużycie VRAM / max VRAM"
+                      unit="MB"
+                      value={`${runResult.results.ollama.gpu_vram_used_mb} / ${runResult.results.ollama.gpu_vram_total_mb}`}
+                    />
+                    <MetricRow label="Obciążenie GPU" unit="%" value={runResult.results.ollama.gpu_util_percent} />
+                    <MetricRow label="Pobór mocy / limit mocy" unit="W" value={`${runResult.results.ollama.gpu_power_draw_w} / ${runResult.results.ollama.gpu_power_limit_w}`} />
+                    <MetricRow label="Temperatura GPU" unit="°C" value={runResult.results.ollama.gpu_temp_c} />
+                  </>
+                )}
+                {!runResult.results.ollama.gpu_metrics_available && (
+                  <tr>
+                    <td colSpan="3" style={{ padding: "8px 12px", color: "var(--text-muted)", fontSize: "12px", borderTop: "1px solid var(--border-color)", fontStyle: "italic" }}>
+                      🎮 GPU (nvidia-smi) — niedostępne (brak karty NVIDIA lub sterowników)
+                    </td>
+                  </tr>
+                )}
+
+                {/* ── SEKCJA 3: System — RAM i CPU ── */}
+                <tr>
+                  <td colSpan="3" style={{ padding: "10px 12px 4px", color: "var(--accent-green)", fontSize: "11px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "1px", borderTop: "1px solid var(--border-color)", background: "rgba(74, 222, 128, 0.04)" }}>
+                    💻 System — RAM i CPU (próbka po teście)
+                  </td>
+                </tr>
+                <MetricRow
+                  label="Zużycie RAM / całkowity RAM"
+                  unit="GB"
+                  value={`${runResult.results.ollama.sys_ram_used_gb} / ${runResult.results.ollama.sys_ram_total_gb} (${runResult.results.ollama.sys_ram_percent}%)`}
+                />
+                <MetricRow label="Obciążenie procesora (CPU)" unit="%" value={runResult.results.ollama.sys_cpu_percent} />
+
+              </tbody>
+            </table>
           </div>
 
-          {/* Analiza alokacji warstw i kompatybilności dla przetestowanego modelu */}
+          {/* Analiza pamięciowa za pomocą panelu kompatybilności */}
           <div style={{ marginTop: "30px", borderTop: "1px solid var(--border-color)", paddingTop: "20px" }}>
             <h4 style={{ fontSize: "15px", fontWeight: "700", marginBottom: "16px", color: "var(--accent-cyan)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
               Analiza wykorzystania pamięci i warstw modelu
@@ -284,7 +323,7 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
             />
           </div>
 
-          {/* Wygenerowana odpowiedź testowa */}
+          {/* Wygenerowana odpowiedź próbna */}
           {runResult.results.ollama.response && (
             <div style={{ marginTop: "30px", borderTop: "1px solid var(--border-color)", paddingTop: "20px" }}>
               <h4 style={{ fontSize: "15px", fontWeight: "700", marginBottom: "12px", color: "var(--accent-cyan)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
@@ -312,5 +351,24 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
       )}
 
     </div>
+  );
+}
+
+// Komponent pomocniczy: pojedynczy wiersz tabeli metryk
+function MetricRow({ label, unit, value, highlight }) {
+  return (
+    <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+      <td style={{ padding: "7px 12px", color: "var(--text-secondary)", fontSize: "13px" }}>{label}</td>
+      <td style={{ padding: "7px 12px", color: "var(--text-muted)", textAlign: "center", fontSize: "12px" }}>{unit}</td>
+      <td style={{
+        padding: "7px 12px",
+        textAlign: "right",
+        fontWeight: highlight ? "700" : "500",
+        color: highlight ? "var(--accent-cyan)" : "var(--text-primary)",
+        fontSize: "13px"
+      }}>
+        {value ?? "—"}
+      </td>
+    </tr>
   );
 }

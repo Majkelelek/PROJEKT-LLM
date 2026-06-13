@@ -1,12 +1,14 @@
-import React from "react";
 import CompatibilityPanel from "./CompatibilityPanel";
 
+// Komponent AIAnalyst wyświetlający ekspercką ocenę AI wygenerowaną przez LLM Ollama wraz z wbudowanym parserem Markdown i pobieraniem.
 export default function AIAnalyst({ currentRun }) {
-  // Export report helper
+  // Funkcja eksportująca treść raportu AI do pliku tekstowego Markdown (.md)
   const downloadReport = () => {
     if (!currentRun) return;
     const dateStr = new Date(currentRun.timestamp).toLocaleDateString().replace(/\//g, "-");
-    const filename = `NeuroBench_Report_${dateStr}.md`;
+    const filename = `Projekt_AI_Raport_${dateStr}.md`;
+    
+    // Utworzenie tymczasowego elementu hiperłącza z adresem blob i wywołanie kliknięcia pobierania
     const element = document.createElement("a");
     const file = new Blob([currentRun.ai_report], { type: "text/markdown" });
     element.href = URL.createObjectURL(file);
@@ -16,35 +18,34 @@ export default function AIAnalyst({ currentRun }) {
     document.body.removeChild(element);
   };
 
-  // Safe and clean Regex-based Markdown Parser
+  // Bezpieczny, lekki parser składni Markdown (nagłówki, listy, paragrafy) oparty o wyrażenia regularne
   const parseMarkdown = (markdown) => {
     if (!markdown) return null;
     
-    // Split into paragraphs/blocks by double newlines
+    // Podział tekstu na bloki za pomocą podwójnych znaków nowej linii
     const blocks = markdown.split(/\n\n+/);
     
     return blocks.map((block, idx) => {
       const trimmedBlock = block.trim();
       if (!trimmedBlock) return null;
 
-      // H1 Header: # Title
+      // Nagłówek H1: # Tytuł
       if (trimmedBlock.startsWith("# ")) {
         return <h1 key={idx}>{parseInlineMarkdown(trimmedBlock.replace(/^#\s+/, ""))}</h1>;
       }
-      // H2 Header: ## Title
+      // Nagłówek H2: ## Tytuł
       if (trimmedBlock.startsWith("## ")) {
         return <h2 key={idx}>{parseInlineMarkdown(trimmedBlock.replace(/^##\s+/, ""))}</h2>;
       }
-      // H3 Header: ### Title
+      // Nagłówek H3: ### Tytuł
       if (trimmedBlock.startsWith("### ")) {
         return <h3 key={idx}>{parseInlineMarkdown(trimmedBlock.replace(/^###\s+/, ""))}</h3>;
       }
       
-      // Unordered Lists: - Item
+      // Listy nienumerowane (wypunktowane): - Element lub * Element
       if (trimmedBlock.startsWith("- ") || trimmedBlock.startsWith("* ")) {
         const items = trimmedBlock.split(/\n[-*]\s+/);
-        // Clean first item marker
-        items[0] = items[0].replace(/^[-*]\s+/, "");
+        items[0] = items[0].replace(/^[-*]\s+/, ""); // Oczyszczenie znacznika z pierwszego elementu
         return (
           <ul key={idx}>
             {items.map((item, itemIdx) => (
@@ -54,7 +55,7 @@ export default function AIAnalyst({ currentRun }) {
         );
       }
 
-      // Ordered Lists: 1. Item
+      // Listy numerowane: 1. Element
       if (/^\d+\.\s+/.test(trimmedBlock)) {
         const items = trimmedBlock.split(/\n\d+\.\s+/);
         items[0] = items[0].replace(/^\d+\.\s+/, "");
@@ -67,16 +68,16 @@ export default function AIAnalyst({ currentRun }) {
         );
       }
 
-      // Normal Paragraph
+      // Zwykły akapit tekstu
       return <p key={idx}>{parseInlineMarkdown(trimmedBlock)}</p>;
     });
   };
 
-  // Helper for bold, code, and italic tags inside blocks
+  // Helper do procesowania stylów wewnątrzblokowych (pogrubienie **, kod `)
   const parseInlineMarkdown = (text) => {
     let parts = [text];
 
-    // 1. Process Bold (**)
+    // 1. Przetwarzanie pogrubienia (**tekst**)
     parts = parts.flatMap(part => {
       if (typeof part !== 'string') return part;
       const regex = /\*\*(.*?)\*\*/g;
@@ -97,7 +98,7 @@ export default function AIAnalyst({ currentRun }) {
       return subParts;
     });
 
-    // 2. Process Code (`)
+    // 2. Przetwarzanie bloków kodu (`kod`)
     parts = parts.flatMap(part => {
       if (typeof part !== 'string') return part;
       const regex = /`(.*?)`/g;
@@ -121,6 +122,7 @@ export default function AIAnalyst({ currentRun }) {
     return parts;
   };
 
+  // Ekran pusty w przypadku braku przeprowadzonego benchmarku
   if (!currentRun) {
     return (
       <div className="glass-panel empty-state animate-fade-in">
@@ -135,7 +137,6 @@ export default function AIAnalyst({ currentRun }) {
 
   return (
     <div className="ai-layout animate-fade-in">
-      {/* Expert Analysis Markdown Panel */}
       <div className="report-panel glass-panel">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
           <div>
@@ -149,10 +150,12 @@ export default function AIAnalyst({ currentRun }) {
           </button>
         </div>
         
+        {/* Renderowanie przeliterowanego dokumentu Markdown */}
         <div className="markdown-body">
           {parseMarkdown(currentRun.ai_report)}
         </div>
 
+        {/* Jeżeli test Ollama powiódł się, dołączamy pod spodem analizę pamięci i warstw */}
         {currentRun.results?.ollama && !currentRun.results.ollama.error && currentRun.results.ollama.tokens_per_sec > 0 && (
           <div style={{ marginTop: "40px", borderTop: "1px solid var(--border-color)", paddingTop: "30px" }}>
             <h3 style={{ fontSize: "16px", fontWeight: "800", marginBottom: "16px", color: "var(--accent-cyan)", textTransform: "uppercase", letterSpacing: "0.5px" }}>

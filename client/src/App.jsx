@@ -1,33 +1,38 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import Dashboard from "./components/Dashboard";
 import BenchmarkPanel from "./components/BenchmarkPanel";
 import AIAnalyst from "./components/AIAnalyst";
 import HistoryPanel from "./components/HistoryPanel";
+import LoadingView from "./components/LoadingView";
+import OfflineView from "./components/OfflineView";
+import Sidebar from "./components/Sidebar";
 import "./App.css";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState("dashboard");
-  const [specs, setSpecs] = useState(null);
-  const [liveMetrics, setLiveMetrics] = useState(null);
-  const [ollamaActive, setOllamaActive] = useState(false);
-  const [models, setModels] = useState([]);
+  // --- Stany globalne aplikacji ---
+  const [activeTab, setActiveTab] = useState("dashboard"); // Aktualnie wybrana zakładka w menu bocznym
+  const [specs, setSpecs] = useState(null); // Statyczna specyfikacja sprzętowa komputera
+  const [liveMetrics, setLiveMetrics] = useState(null); // Dynamiczne metryki obciążenia CPU/RAM pobrane na starcie
+  const [ollamaActive, setOllamaActive] = useState(false); // Czy lokalne API Ollama jest aktywne
+  const [models, setModels] = useState([]); // Lista dostępnych modeli w usłudze Ollama
   
-  const [activeRun, setActiveRun] = useState(null);
-  const [backendError, setBackendError] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [activeRun, setActiveRun] = useState(null); // Aktualnie przeglądany przebieg benchmarku (do wyświetlenia w Dashboard/AIAnalyst)
+  const [backendError, setBackendError] = useState(false); // Flaga informująca o braku połączenia z backendem .NET
+  const [loading, setLoading] = useState(true); // Status ładowania początkowych danych aplikacji
 
+  // Funkcja pobierająca wstępne dane przy uruchomieniu aplikacji (specyfikację sprzętową, status Ollamy i historię z przeglądarki)
   const fetchInitialData = async () => {
     setLoading(true);
     setBackendError(false);
     try {
-      // 1. Fetch system static & live metrics
+      // 1. Pobieranie danych o systemie i aktualnych metrykach z backendu
       const systemRes = await fetch("http://127.0.0.1:8000/api/system-info");
-      if (!systemRes.ok) throw new Error("Backend system info API error");
+      if (!systemRes.ok) throw new Error("Błąd API informacji o systemie backendu");
       const systemData = await systemRes.json();
       setSpecs(systemData.specs);
       setLiveMetrics(systemData.live_metrics);
 
-      // 2. Fetch Ollama details
+      // 2. Pobieranie statusu i listy modeli z usługi Ollama poprzez backend
       const ollamaRes = await fetch("http://127.0.0.1:8000/api/models");
       if (ollamaRes.ok) {
         const ollamaData = await ollamaRes.json();
@@ -35,26 +40,27 @@ export default function App() {
         setModels(ollamaData.models);
       }
       
-      // 3. Get past runs from localStorage to set the most recent run as default view
+      // 3. Odczytywanie historii testów z pamięci lokalnej przeglądarki (localStorage)
       try {
-        const localData = localStorage.getItem("neurobench_history");
+        const localData = localStorage.getItem("projekt_ai_history");
         const reportsData = localData ? JSON.parse(localData) : [];
         if (reportsData.length > 0) {
-          // Sort and set newest
+          // Sortowanie według daty i ustawienie najnowszego testu jako aktywnego
           const sorted = reportsData.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
           setActiveRun(sorted[0]);
         }
       } catch (e) {
-        console.error("Failed to parse localStorage history:", e);
+        console.error("Nie udało się sparsować historii z localStorage:", e);
       }
     } catch (err) {
-      console.error("Failed to connect to ASP.NET Core backend:", err);
+      console.error("Nie udało się połączyć z backendem ASP.NET Core:", err);
       setBackendError(true);
     } finally {
       setLoading(false);
     }
   };
 
+  // Cykliczne sprawdzanie połączenia z serwerem i Ollamą w tle (co 5 sekund)
   const checkConnection = async () => {
     try {
       const ollamaRes = await fetch("http://127.0.0.1:8000/api/models");
@@ -67,117 +73,66 @@ export default function App() {
         setOllamaActive(false);
       }
     } catch (err) {
-      console.error("Backend connection lost:", err);
+      console.error("Utracono połączenie z backendem:", err);
       setOllamaActive(false);
       setBackendError(true);
     }
   };
 
+  // Efekt uruchamiający początkowe pobieranie danych i rejestrujący interwał sprawdzania połączenia
   useEffect(() => {
-    fetchInitialData();
+    setTimeout(() => {
+      fetchInitialData();
+    }, 0);
     const interval = setInterval(checkConnection, 5000);
     return () => clearInterval(interval);
   }, []);
 
+  // Obsługa zakończenia nowego testu wydajnościowego
   const handleBenchmarkComplete = (completedRun) => {
     try {
-      const localData = localStorage.getItem("neurobench_history");
+      const localData = localStorage.getItem("projekt_ai_history");
       const data = localData ? JSON.parse(localData) : [];
       data.push(completedRun);
-      localStorage.setItem("neurobench_history", JSON.stringify(data));
+      // Zapisujemy nowy wynik w pamięci przeglądarki (localStorage)
+      localStorage.setItem("projekt_ai_history", JSON.stringify(data));
     } catch (e) {
-      console.error("Failed to save run to localStorage:", e);
+      console.error("Nie udało się zapisać przebiegu testu w localStorage:", e);
     }
     
+    // Ustawiamy ten bieg jako aktywny i przełączamy automatycznie na kartę raportu AI
     setActiveRun(completedRun);
-    // Automatically switch to AI analysis tab to show the report!
     setActiveTab("analysis");
   };
 
+  // Obsługa wybrania historycznego rekordu z tabeli wyników
   const handleSelectHistoryRun = (run) => {
     setActiveRun(run);
-    setActiveTab("dashboard"); // load specs details and jump back
+    setActiveTab("dashboard"); // Ładujemy specyfikację danego testu i wracamy do panelu głównego
   };
 
+  // Ekran błędu - serwer backend offline
   if (backendError) {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", backgroundColor: "var(--bg-primary)", gap: "20px", padding: "20px", textAlign: "center" }}>
-        <div style={{ fontSize: "64px" }}>🔌</div>
-        <h1 style={{ fontSize: "28px", fontWeight: "800", color: "var(--accent-red)" }}>NeuroBench Backend jest Offline</h1>
-        <p style={{ color: "var(--text-secondary)", maxWidth: "500px", lineHeight: "1.6" }}>
-          Nie udało się nawiązać połączenia z serwerem ASP.NET Core (.NET 8). Upewnij się, że serwer działa na lokalnym porcie 8000.
-        </p>
-        <div style={{ padding: "16px", background: "rgba(255,255,255,0.02)", border: "1px solid var(--border-color)", borderRadius: "8px", fontFamily: "var(--font-mono)", fontSize: "14px", color: "var(--accent-cyan)", textAlign: "left" }}>
-          # Jak uruchomić backend:<br />
-          cd server<br />
-          dotnet run
-        </div>
-        <button className="btn btn-primary" onClick={fetchInitialData} style={{ marginTop: "10px" }}>
-          🔄 Spróbuj ponownie
-        </button>
-      </div>
-    );
+    return <OfflineView onRetry={fetchInitialData} />;
   }
 
+  // Ekran ładowania - inicjalizacja danych
   if (loading) {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", backgroundColor: "var(--bg-primary)", gap: "16px" }}>
-        <div className="spinner spinner-large glowing-text-cyan"></div>
-        <div style={{ fontSize: "16px", color: "var(--text-secondary)", fontWeight: "500" }}>Inicjalizacja Panelu NeuroBench AI...</div>
-      </div>
-    );
+    return <LoadingView />;
   }
 
+  // Główny layout i router paneli interfejsu
   return (
     <div className="app-container">
-      {/* Sidebar Navigation */}
-      <aside className="app-sidebar">
-        <div className="sidebar-logo">
-          <div className="logo-icon">N</div>
-          <span className="logo-text">NeuroBench AI</span>
-        </div>
+      {/* Panel boczny nawigacji */}
+      <Sidebar 
+        activeTab={activeTab} 
+        onTabChange={setActiveTab} 
+        ollamaActive={ollamaActive} 
+        modelsCount={models.length} 
+      />
 
-        <nav className="sidebar-nav">
-          <button 
-            className={`nav-item ${activeTab === "dashboard" ? "active" : ""}`}
-            onClick={() => setActiveTab("dashboard")}
-          >
-            📊 Specyfikacja
-          </button>
-          <button 
-            className={`nav-item ${activeTab === "benchmark" ? "active" : ""}`}
-            onClick={() => setActiveTab("benchmark")}
-          >
-            🚀 Uruchom testy
-          </button>
-          <button 
-            className={`nav-item ${activeTab === "analysis" ? "active" : ""}`}
-            onClick={() => setActiveTab("analysis")}
-          >
-            🧠 Raport analityka AI
-          </button>
-          <button 
-            className={`nav-item ${activeTab === "history" ? "active" : ""}`}
-            onClick={() => setActiveTab("history")}
-          >
-            📁 Zapisane wyniki
-          </button>
-        </nav>
-
-        <div className="sidebar-footer">
-          <div className="ollama-status-card">
-            <span className={`status-indicator ${ollamaActive ? "online" : "offline"}`}></span>
-            <div>
-              <div style={{ fontWeight: "600" }}>Lokalne API Ollama</div>
-              <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>
-                {ollamaActive ? `Online (modele: ${models.length})` : "Offline"}
-              </div>
-            </div>
-          </div>
-        </div>
-      </aside>
-
-      {/* Main Content Area */}
+      {/* Główna sekcja zawartości strony */}
       <main className="app-content">
         <header className="page-header">
           <div className="header-title">
@@ -196,7 +151,7 @@ export default function App() {
           </div>
         </header>
 
-        {/* Tab view routing */}
+        {/* Renderowanie poszczególnych widoków w zależności od wybranej zakładki */}
         {activeTab === "dashboard" && (
           <Dashboard 
             specs={activeRun?.specs || specs} 

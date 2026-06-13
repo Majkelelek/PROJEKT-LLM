@@ -8,23 +8,23 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using NeuroBench.Backend.Models;
-using NeuroBench.Backend.Services;
+using ProjektAI.Backend.Models;
+using ProjektAI.Backend.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Configure Kestrel to listen on 127.0.0.1:8000 to match Python FastAPI backend
+// Konfiguracja Kestrel (wbudowany serwer HTTP), aby nasłuchiwał na adresie 127.0.0.1:8000
 builder.WebHost.UseUrls("http://127.0.0.1:8000");
 
-// Configure logging
+// Konfiguracja dostawców logów (wyczyszczenie domyślnych i dodanie logowania w konsoli)
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 
-// Add services
+// Rejestracja usług w kontenerze wstrzykiwania zależności (Dependency Injection)
 builder.Services.AddSingleton<SystemInfoService>();
 builder.Services.AddHttpClient<OllamaClientService>();
 
-// Configure CORS
+// Konfiguracja polityki CORS (Cross-Origin Resource Sharing) dopuszczającej zapytania z dowolnego źródła
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
@@ -37,12 +37,12 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Enable CORS
+// Włączenie polityki CORS w potoku przetwarzania żądań HTTP
 app.UseCors("AllowAll");
 
-// --- API Endpoints ---
+// --- Punkty końcowe API (Endpoints) ---
 
-// 1. GET /api/system-info: Get full static specs and current live metrics
+// 1. GET /api/system-info: Zwraca pełną statyczną specyfikację sprzętową oraz aktualne metryki dynamiczne (zużycie CPU, RAM)
 app.MapGet("/api/system-info", (SystemInfoService sysInfo) =>
 {
     try
@@ -57,12 +57,12 @@ app.MapGet("/api/system-info", (SystemInfoService sysInfo) =>
     }
     catch (Exception ex)
     {
-        app.Logger.LogError(ex, "Error fetching system information");
+        app.Logger.LogError(ex, "Błąd podczas pobierania informacji o systemie");
         return Results.Problem(ex.Message, statusCode: 500);
     }
 });
 
-// 2. GET /api/system-info/live: Get current live CPU/RAM metrics only
+// 2. GET /api/system-info/live: Zwraca wyłącznie aktualne, dynamiczne metryki zużycia CPU i pamięci RAM
 app.MapGet("/api/system-info/live", (SystemInfoService sysInfo) =>
 {
     try
@@ -72,12 +72,12 @@ app.MapGet("/api/system-info/live", (SystemInfoService sysInfo) =>
     }
     catch (Exception ex)
     {
-        app.Logger.LogError(ex, "Error fetching live metrics");
+        app.Logger.LogError(ex, "Błąd podczas pobierania metryk na żywo");
         return Results.Problem(ex.Message, statusCode: 500);
     }
 });
 
-// 3. GET /api/models: Check if Ollama is running and fetch list of models
+// 3. GET /api/models: Sprawdza czy usługa Ollama jest aktywna oraz pobiera listę zainstalowanych modeli lokalnych
 app.MapGet("/api/models", async (OllamaClientService ollama) =>
 {
     bool isRunning = await ollama.IsOllamaRunningAsync();
@@ -98,20 +98,24 @@ app.MapGet("/api/models", async (OllamaClientService ollama) =>
     });
 });
 
-// 4. POST /api/benchmark/run-stream: Run LLM benchmark and stream progress/results via SSE
+// 4. POST /api/benchmark/run-stream: Uruchamia benchmark LLM i przesyła postęp oraz wyniki za pomocą strumienia Server-Sent Events (SSE)
 app.MapPost("/api/benchmark/run-stream", async (
     HttpContext context,
     RunBenchmarkRequest request,
     OllamaClientService ollama,
     SystemInfoService sysInfo) =>
 {
+    // Ustawienie odpowiednich nagłówków HTTP dla transmisji SSE
+    // X-Accel-Buffering: no wyłącza buforowanie odpowiedzi przez Kestrel i ewentualne proxy (nginx)
     context.Response.ContentType = "text/event-stream";
     context.Response.Headers.Append("Cache-Control", "no-cache");
     context.Response.Headers.Append("Connection", "keep-alive");
-    await context.Response.Body.FlushAsync();
+    context.Response.Headers.Append("X-Accel-Buffering", "no");
 
-    using var writer = new StreamWriter(context.Response.Body);
-
+    // Pomocnicza funkcja asynchroniczna do wysyłania zdarzeń w formacie SSE do klienta.
+    // WAŻNE: Piszemy bezpośrednio przez context.Response.WriteAsync, a NIE przez StreamWriter,
+    // ponieważ StreamWriter z blokiem "using" dispose'uje strumień odpowiedzi HTTP zbyt wcześnie,
+    // co powoduje błąd ERR_INCOMPLETE_CHUNKED_ENCODING w przeglądarce.
     async Task SendSseEvent(string step, string message, int progress, string status = "running", object? run = null)
     {
         var payload = new
@@ -127,8 +131,8 @@ app.MapPost("/api/benchmark/run-stream", async (
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         });
-        await writer.WriteAsync($"data: {json}\n\n");
-        await writer.FlushAsync();
+        await context.Response.WriteAsync($"data: {json}\n\n");
+        await context.Response.Body.FlushAsync();
     }
 
     try
@@ -136,7 +140,7 @@ app.MapPost("/api/benchmark/run-stream", async (
         var specs = sysInfo.GetStaticSpecs();
         var results = new BenchmarkResults();
 
-        // Step 1: Run inference benchmark on Selected Model
+        // Krok 1: Uruchomienie testu wnioskowania (Inference Benchmark) na wybranym modelu
         if (!string.IsNullOrEmpty(request.Model))
         {
             await SendSseEvent("ollama", $"Uruchamianie testu wnioskowania LLM Ollama z modelem [{request.Model}]...", 20);
@@ -147,12 +151,12 @@ app.MapPost("/api/benchmark/run-stream", async (
             {
                 try
                 {
-                    var ollamaRes = await ollama.RunLlmBenchmarkAsync(request.Model, request.Complexity);
+                    var ollamaRes = await ollama.RunLlmBenchmarkAsync(request.Model, request.Complexity, sysInfo);
                     results.Ollama = ollamaRes;
                 }
                 catch (Exception ex)
                 {
-                    app.Logger.LogError(ex, "Ollama inference benchmark failed");
+                    app.Logger.LogError(ex, "Błąd testu wydajności Ollama");
                     results.Ollama = new OllamaResult
                     {
                         Error = ex.Message,
@@ -167,7 +171,7 @@ app.MapPost("/api/benchmark/run-stream", async (
             {
                 results.Ollama = new OllamaResult
                 {
-                    Error = "Ollama is not running.",
+                    Error = "Usługa Ollama nie jest uruchomiona.",
                     Model = request.Model,
                     TokensPerSec = 0,
                     LatencySec = 0
@@ -179,14 +183,14 @@ app.MapPost("/api/benchmark/run-stream", async (
         {
             results.Ollama = new OllamaResult
             {
-                Error = "No model selected",
+                Error = "Nie wybrano żadnego modelu",
                 Model = "",
                 TokensPerSec = 0,
                 LatencySec = 0
             };
         }
 
-        // Step 2: Generate AI analysis report
+        // Krok 2: Generowanie raportu analizy wydajności przez sztuczną inteligencję (AI)
         string aiReport = "";
         bool ollamaRunningForReport = await ollama.IsOllamaRunningAsync();
         if (!string.IsNullOrEmpty(request.Model) && ollamaRunningForReport)
@@ -199,7 +203,7 @@ app.MapPost("/api/benchmark/run-stream", async (
             }
             catch (Exception ex)
             {
-                app.Logger.LogError(ex, "AI Report generation failed");
+                app.Logger.LogError(ex, "Generowanie raportu AI zakończone niepowodzeniem");
                 aiReport = $"### Ocena Wydajności Wnioskowania AI\n\nBłąd podczas generowania raportu przez Ollama: {ex.Message}\n\nSpecyfikacja:\n- CPU: {specs.CpuModel}\n- RAM: {specs.RamTotalGb} GB\n- GPU: {string.Join(", ", specs.Gpus)}";
             }
         }
@@ -208,7 +212,7 @@ app.MapPost("/api/benchmark/run-stream", async (
             aiReport = "### Ocena Wydajności Wnioskowania AI\n\nRaport analizy AI został pominięty. Upewnij się, że Ollama działa i wybrano model, aby wygenerować szczegółowe analizy AI.";
         }
 
-        // Prepare final run data
+        // Przygotowanie końcowych danych z przebiegu testu
         var finalRunData = new BenchmarkRun
         {
             Id = Guid.NewGuid().ToString(),
@@ -216,16 +220,16 @@ app.MapPost("/api/benchmark/run-stream", async (
             Specs = specs,
             Results = results,
             AiReport = aiReport,
-            SelectedModel = request.Model ?? "None",
+            SelectedModel = request.Model ?? "Brak",
             Complexity = request.Complexity
         };
 
-        // Completion SSE message
+        // Wysłanie wiadomości o pomyślnym ukończeniu testu w SSE
         await SendSseEvent("finished", "Test zakończony sukcesem!", 100, "completed", finalRunData);
     }
     catch (Exception ex)
     {
-        app.Logger.LogError(ex, "Error running benchmark stream session");
+        app.Logger.LogError(ex, "Błąd podczas sesji strumieniowania testów");
         try
         {
             await SendSseEvent("error", $"Błąd podczas wykonywania testu: {ex.Message}", 100, "error");
@@ -234,9 +238,7 @@ app.MapPost("/api/benchmark/run-stream", async (
     }
 });
 
-
-
-// 8. POST /api/chat: Hardware expert assistant chat room (text streaming)
+// 5. POST /api/chat: Wirtualny asystent ds. sprzętu i wydajności (strumieniowanie tekstowe odpowiedzi)
 app.MapPost("/api/chat", async (HttpContext context, ChatRequest request, OllamaClientService ollama) =>
 {
     bool ollamaActive = await ollama.IsOllamaRunningAsync();
@@ -251,6 +253,7 @@ app.MapPost("/api/chat", async (HttpContext context, ChatRequest request, Ollama
     
     try
     {
+        // Pętla pobierająca przychodzące fragmenty tekstu z usługi Ollama i natychmiast wysyłająca je do klienta
         await foreach (var chunk in ollama.StreamChatResponseAsync(request.Model, request.Specs, request.Results, request.History))
         {
             await context.Response.WriteAsync(chunk);
@@ -259,9 +262,10 @@ app.MapPost("/api/chat", async (HttpContext context, ChatRequest request, Ollama
     }
     catch (Exception ex)
     {
-        app.Logger.LogError(ex, "Chat streaming session failed");
-        await context.Response.WriteAsync($"\n[AI Chat Error: {ex.Message}]");
+        app.Logger.LogError(ex, "Strumieniowanie odpowiedzi czatu zakończone niepowodzeniem");
+        await context.Response.WriteAsync($"\n[Błąd czatu AI: {ex.Message}]");
     }
 });
 
+// Uruchomienie aplikacji webowej i nasłuchiwanie na żądania HTTP
 app.Run();

@@ -5,32 +5,36 @@ using System.Management;
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
-using NeuroBench.Backend.Models;
+using ProjektAI.Backend.Models;
 
-namespace NeuroBench.Backend.Services
+namespace ProjektAI.Backend.Services
 {
+    // Usługa odpowiedzialna za zbieranie statycznych i dynamicznych informacji o systemie operacyjnym i sprzęcie.
     public class SystemInfoService
     {
         private readonly ILogger<SystemInfoService> _logger;
         private readonly SystemSpecs _cachedSpecs;
 
+        // Inicjalizacja usługi, pobranie i zapisanie w pamięci podręcznej (cache) statycznych parametrów sprzętowych
         public SystemInfoService(ILogger<SystemInfoService> logger)
         {
             _logger = logger;
             _cachedSpecs = LoadStaticSpecs();
         }
 
+        // Zwraca zapamiętane statyczne parametry sprzętowe
         public SystemSpecs GetStaticSpecs()
         {
             return _cachedSpecs;
         }
 
+        // Pobiera aktualne dynamiczne metryki systemowe (zużycie procesora i pamięci RAM)
         public LiveMetrics GetDynamicMetrics()
         {
             var metrics = new LiveMetrics();
             try
             {
-                // 1. Memory Usage
+                // 1. Pobieranie danych o pamięci RAM (Całkowita i Wolna pamięć)
                 using (var searcher = new ManagementObjectSearcher("SELECT TotalVisibleMemorySize, FreePhysicalMemory FROM Win32_OperatingSystem"))
                 using (var results = searcher.Get())
                 {
@@ -50,7 +54,7 @@ namespace NeuroBench.Backend.Services
                     }
                 }
 
-                // 2. CPU Usage
+                // 2. Pobieranie danych o zużyciu Procesora (CPU)
                 using (var searcher = new ManagementObjectSearcher("SELECT Name, PercentProcessorTime FROM Win32_PerfFormattedData_PerfOS_Processor"))
                 using (var results = searcher.Get())
                 {
@@ -62,11 +66,11 @@ namespace NeuroBench.Backend.Services
                         cpuList.Add((name, val));
                     }
 
-                    // Total CPU
+                    // Całkowite zużycie CPU (metoda _Total)
                     var totalCpu = cpuList.FirstOrDefault(c => c.Name == "_Total");
                     metrics.CpuPercent = totalCpu.Percent;
 
-                    // Per-core CPU
+                    // Zużycie poszczególnych rdzeni/wątków CPU
                     var perCore = cpuList.Where(c => c.Name != "_Total")
                                          .OrderBy(c => int.TryParse(c.Name, out int idx) ? idx : 999)
                                          .Select(c => c.Percent)
@@ -77,33 +81,119 @@ namespace NeuroBench.Backend.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error gathering live system metrics");
+                _logger.LogError(ex, "Błąd podczas zbierania dynamicznych metryk systemu");
             }
 
             return metrics;
         }
 
+        // Próbkuje metryki GPU za pomocą narzędzia nvidia-smi (wymagana karta NVIDIA z zainstalowanymi sterownikami).
+        // Zwraca słownik z kluczami: vram_used_mb, vram_total_mb, gpu_util, power_draw, power_limit, temperature
+        public async System.Threading.Tasks.Task<System.Collections.Generic.Dictionary<string, double>> GetNvidiaSmiAsync()
+        {
+            var result = new System.Collections.Generic.Dictionary<string, double>();
+            try
+            {
+                // Zapytanie nvidia-smi o: użyty VRAM, całkowity VRAM, obciążenie GPU, pobór mocy, limit mocy, temperaturę
+                var psi = new System.Diagnostics.ProcessStartInfo("nvidia-smi",
+                    "--query-gpu=memory.used,memory.total,utilization.gpu,power.draw,power.limit,temperature.gpu --format=csv,noheader,nounits")
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var process = System.Diagnostics.Process.Start(psi);
+                if (process == null) return result;
+
+                var output = await process.StandardOutput.ReadToEndAsync();
+                await process.WaitForExitAsync();
+
+                // Format wyjścia: "vram_used, vram_total, gpu_util, power_draw, power_limit, temp"
+                var parts = output.Trim().Split(',');
+                if (parts.Length >= 6)
+                {
+                    if (double.TryParse(parts[0].Trim(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double vramUsed))
+                        result["vram_used_mb"] = vramUsed;
+                    if (double.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double vramTotal))
+                        result["vram_total_mb"] = vramTotal;
+                    if (double.TryParse(parts[2].Trim(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double gpuUtil))
+                        result["gpu_util"] = gpuUtil;
+                    if (double.TryParse(parts[3].Trim(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double powerDraw))
+                        result["power_draw"] = powerDraw;
+                    if (double.TryParse(parts[4].Trim(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double powerLimit))
+                        result["power_limit"] = powerLimit;
+                    if (double.TryParse(parts[5].Trim(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double temp))
+                        result["temperature"] = temp;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("nvidia-smi niedostępny lub wystąpił błąd: {Message}", ex.Message);
+            }
+            return result;
+        }
+
+        // Pobiera szybką migawkę metryk systemowych (RAM, CPU) do zapisu razem z wynikami benchmarku.
+        // Uproszczona wersja GetDynamicMetrics zwracająca tylko dane istotne dla kontekstu benchmarku.
+        public (double ramUsedGb, double ramTotalGb, double ramPercent, double cpuPercent) GetSystemSnapshot()
+        {
+            double ramUsedGb = 0, ramTotalGb = 0, ramPercent = 0, cpuPercent = 0;
+            try
+            {
+                using (var searcher = new ManagementObjectSearcher("SELECT TotalVisibleMemorySize, FreePhysicalMemory FROM Win32_OperatingSystem"))
+                using (var results = searcher.Get())
+                {
+                    foreach (var item in results)
+                    {
+                        double totalKb = Convert.ToDouble(item["TotalVisibleMemorySize"]);
+                        double freeKb = Convert.ToDouble(item["FreePhysicalMemory"]);
+                        ramTotalGb = Math.Round(totalKb / (1024.0 * 1024.0), 2);
+                        double freeGb = Math.Round(freeKb / (1024.0 * 1024.0), 2);
+                        ramUsedGb = Math.Round(ramTotalGb - freeGb, 2);
+                        ramPercent = Math.Round((ramUsedGb / ramTotalGb) * 100.0, 1);
+                    }
+                }
+
+                using (var searcher = new ManagementObjectSearcher("SELECT Name, PercentProcessorTime FROM Win32_PerfFormattedData_PerfOS_Processor WHERE Name='_Total'"))
+                using (var results = searcher.Get())
+                {
+                    foreach (var item in results)
+                    {
+                        cpuPercent = Convert.ToDouble(item["PercentProcessorTime"]);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("Błąd podczas pobierania migawki systemowej: {Message}", ex.Message);
+            }
+            return (ramUsedGb, ramTotalGb, ramPercent, cpuPercent);
+        }
+
+
         private SystemSpecs LoadStaticSpecs()
         {
             var specs = new SystemSpecs();
 
-            // OS
+            // Nazwa i wersja systemu operacyjnego
             specs.Os = GetOsVersion();
 
-            // CPU Name
+            // Nazwa modelu procesora
             specs.CpuModel = GetCpuName();
 
-            // CPU Cores
+            // Rdzenie logiczne i fizyczne procesora
             specs.CpuCoresLogical = Environment.ProcessorCount;
             specs.CpuCoresPhysical = GetPhysicalCpuCores();
 
-            // CPU Max Freq
+            // Maksymalne taktowanie procesora
             specs.CpuMaxFrequencyMhz = GetCpuMaxFrequency();
 
-            // Total RAM
+            // Całkowita pamięć operacyjna RAM
             specs.RamTotalGb = GetTotalRamGb();
 
-            // GPUs and GPU Details
+            // Informacje o kartach graficznych (GPU) i ich pamięci VRAM
             var (gpuNames, gpuDetails) = GetGpuInformation();
             specs.Gpus = gpuNames;
             specs.GpuDetails = gpuDetails;
@@ -111,6 +201,7 @@ namespace NeuroBench.Backend.Services
             return specs;
         }
 
+        // Odczytuje nazwę systemu operacyjnego
         private string GetOsVersion()
         {
             try
@@ -131,15 +222,16 @@ namespace NeuroBench.Backend.Services
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Could not get OS version via WMI");
+                _logger.LogWarning(ex, "Nie udało się pobrać wersji systemu operacyjnego przez WMI");
             }
 
             return RuntimeInformation.OSDescription;
         }
 
+        // Odczytuje model procesora (najpierw z rejestru Windows, w razie błędu przez WMI)
         private string GetCpuName()
         {
-            // Try Registry first
+            // Próba odczytu z Rejestru Systemowego (szybsze i dokładniejsze na Windowsie)
             try
             {
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -156,10 +248,10 @@ namespace NeuroBench.Backend.Services
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Could not read CPU name from registry");
+                _logger.LogWarning(ex, "Nie udało się odczytać nazwy procesora z rejestru systemowego");
             }
 
-            // Fallback to WMI
+            // Alternatywna próba przez zapytanie WMI
             try
             {
                 using (var searcher = new ManagementObjectSearcher("SELECT Name FROM Win32_Processor"))
@@ -174,12 +266,13 @@ namespace NeuroBench.Backend.Services
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Could not read CPU name from WMI");
+                _logger.LogWarning(ex, "Nie udało się odczytać nazwy procesora przez WMI");
             }
 
-            return Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER") ?? "Unknown CPU";
+            return Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER") ?? "Nieznany procesor";
         }
 
+        // Pobiera liczbę fizycznych rdzeni procesora (nie wątków HT)
         private int GetPhysicalCpuCores()
         {
             try
@@ -197,16 +290,16 @@ namespace NeuroBench.Backend.Services
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Could not read CPU physical cores from WMI");
+                _logger.LogWarning(ex, "Nie udało się odczytać liczby fizycznych rdzeni procesora przez WMI");
             }
 
-            // Fallback guess
+            // Domyślny szacunek (rdzenie logiczne / 2)
             return Math.Max(1, Environment.ProcessorCount / 2);
         }
 
+        // Pobiera maksymalne taktowanie bazowe procesora (MHz)
         private double GetCpuMaxFrequency()
         {
-            // Try Registry first
             try
             {
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -223,10 +316,9 @@ namespace NeuroBench.Backend.Services
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Could not read CPU frequency from registry");
+                _logger.LogWarning(ex, "Nie udało się odczytać częstotliwości taktowania procesora z rejestru systemowego");
             }
 
-            // Fallback WMI
             try
             {
                 using (var searcher = new ManagementObjectSearcher("SELECT MaxClockSpeed FROM Win32_Processor"))
@@ -240,12 +332,13 @@ namespace NeuroBench.Backend.Services
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Could not read CPU frequency from WMI");
+                _logger.LogWarning(ex, "Nie udało się odczytać częstotliwości taktowania procesora przez WMI");
             }
 
             return 0.0;
         }
 
+        // Pobiera całkowitą pamięć RAM zainstalowaną w komputerze (w GB)
         private double GetTotalRamGb()
         {
             try
@@ -262,12 +355,13 @@ namespace NeuroBench.Backend.Services
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Could not read Total RAM from WMI");
+                _logger.LogWarning(ex, "Nie udało się odczytać całkowitej pamięci RAM przez WMI");
             }
 
             return 0.0;
         }
 
+        // Zwraca listę nazw kart graficznych oraz szczegółowe informacje (nazwa i ilość VRAM)
         private (List<string> Names, List<GpuDetail> Details) GetGpuInformation()
         {
             var names = new List<string>();
@@ -280,7 +374,7 @@ namespace NeuroBench.Backend.Services
                 {
                     foreach (var item in results)
                     {
-                        var name = item["Name"]?.ToString() ?? "Unknown GPU";
+                        var name = item["Name"]?.ToString() ?? "Nieznana karta graficzna";
                         double vramGb = 0.0;
 
                         var adapterRam = item["AdapterRAM"];
@@ -292,7 +386,7 @@ namespace NeuroBench.Backend.Services
                                 ulong bytes;
                                 if (bytesSigned < 0)
                                 {
-                                    // Handle overflow for 32-bit queries on systems with large VRAM (VRAM + 4GB)
+                                    // Obsługa przepełnienia dla zapytań 32-bitowych na systemach o dużej pamięci VRAM (dodajemy 4GB)
                                     bytes = (ulong)(bytesSigned + 4294967296L);
                                 }
                                 else
@@ -304,7 +398,7 @@ namespace NeuroBench.Backend.Services
                             }
                             catch (Exception ramEx)
                             {
-                                _logger.LogWarning(ramEx, "Failed to parse AdapterRAM");
+                                _logger.LogWarning(ramEx, "Nie udało się sparsować wartości AdapterRAM dla karty graficznej");
                             }
                         }
 
@@ -315,13 +409,14 @@ namespace NeuroBench.Backend.Services
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Could not read GPU information from WMI");
+                _logger.LogWarning(ex, "Nie udało się odczytać informacji o karcie graficznej przez WMI");
             }
 
+            // Jeśli nie wykryto żadnej karty, wstawiamy wartość zastępczą
             if (names.Count == 0)
             {
-                names.Add("Unknown GPU (or Integrated Graphics Only)");
-                details.Add(new GpuDetail { Name = "Unknown GPU", VramGb = 0.0 });
+                names.Add("Nieznana karta graficzna (lub tylko zintegrowany układ graficzny)");
+                details.Add(new GpuDetail { Name = "Nieznana karta GPU", VramGb = 0.0 });
             }
 
             return (names, details);

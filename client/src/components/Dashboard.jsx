@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 
+// Komponent głównego panelu kontrolnego (Dashboard) wyświetlający podzespoły sprzętowe oraz wykresy użycia zasobów w czasie rzeczywistym.
 export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
-  const [history, setHistory] = useState([]);
-  const [localLive, setLocalLive] = useState(liveMetrics);
+  const [history, setHistory] = useState([]); // Przechowuje historię punktów wykresu (ostatnie 20 odczytów)
+  const [localLive, setLocalLive] = useState(liveMetrics); // Przechowuje aktualne, lokalne dane zużycia zasobów
 
-  // Poll for live metrics
+  // Efekt uruchamiający cykliczne pobieranie (polling) dynamicznych metryk systemu co 1.5 sekundy
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
@@ -13,20 +14,21 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
           const data = await res.json();
           setLocalLive(data);
           
+          // Aktualizacja historii wykresu (limit do ostatnich 20 odczytów dla optymalizacji wydajności)
           setHistory(prev => {
             const next = [...prev, { time: Date.now(), cpu: data.cpu_percent, ram: data.ram_percent }];
             if (next.length > 20) {
-              next.shift();
+              next.shift(); // Usuwa najstarszy element
             }
             return next;
           });
         }
       } catch (err) {
-        console.error("Error polling live metrics:", err);
+        console.error("Błąd pobierania metryk na żywo:", err);
       }
     }, 1500);
 
-    return () => clearInterval(interval);
+    return () => clearInterval(interval); // Czyszczenie interwału przy odmontowaniu komponentu
   }, []);
 
   const cpuPercent = localLive?.cpu_percent ?? 0;
@@ -34,13 +36,13 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
   const ramUsed = localLive?.ram_used_gb ?? 0;
   const ramTotal = specs?.ram_total_gb ?? 0;
 
-  // SVG Gauge calculations
+  // Obliczenia parametrów dla okrągłych wskaźników SVG (Gauge)
   const radius = 70;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffsetCpu = circumference - (cpuPercent / 100) * circumference;
   const strokeDashoffsetRam = circumference - (ramPercent / 100) * circumference;
 
-  // SVG Scrolling Chart Calculations
+  // Funkcja obliczająca ciąg punktów (współrzędnych X,Y) dla elementu polyline w wykresie SVG
   const chartWidth = 500;
   const chartHeight = 120;
   const padding = 10;
@@ -48,8 +50,10 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
     if (history.length < 2) return "";
     return history
       .map((d, i) => {
+        // Skalowanie współrzędnej X w zależności od indeksu odczytu
         const x = padding + (i / (history.length - 1)) * (chartWidth - padding * 2);
         const val = d[key] ?? 0;
+        // Skalowanie współrzędnej Y w zależności od procentu obciążenia (odwrócona oś Y w SVG)
         const y = chartHeight - padding - (val / 100) * (chartHeight - padding * 2);
         return `${x},${y}`;
       })
@@ -62,8 +66,9 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
   return (
     <div className="animate-fade-in" style={{ display: "flex", flexDirection: "column", gap: "30px" }}>
       
-      {/* Hardware Specs Grid */}
+      {/* Siatka z kartami specyfikacji technicznej sprzętu */}
       <div className="specs-grid">
+        {/* Karta Procesora (CPU) */}
         <div className="spec-card glass-panel" style={{ "--card-accent": "var(--accent-cyan)" }}>
           <div className="spec-icon">💻</div>
           <div className="spec-label">Procesor (CPU)</div>
@@ -74,6 +79,7 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
           </div>
         </div>
 
+        {/* Karta Pamięci RAM */}
         <div className="spec-card glass-panel" style={{ "--card-accent": "var(--accent-purple)" }}>
           <div className="spec-icon">🧠</div>
           <div className="spec-label">Pamięć RAM</div>
@@ -81,6 +87,7 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
           <div className="spec-sub">Dostępna pojemność do obliczeń</div>
         </div>
 
+        {/* Karta Karty Graficznej (GPU) */}
         <div className="spec-card glass-panel" style={{ "--card-accent": "var(--accent-green)" }}>
           <div className="spec-icon">🎮</div>
           <div className="spec-label">Karta graficzna (GPU)</div>
@@ -90,18 +97,19 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
           <div className="spec-sub">Bezpośredni interfejs sprzętowy</div>
         </div>
 
+        {/* Karta Systemu Operacyjnego */}
         <div className="spec-card glass-panel" style={{ "--card-accent": "var(--accent-amber)" }}>
           <div className="spec-icon">⚙️</div>
           <div className="spec-label">System operacyjny</div>
           <div className="spec-value">{specs?.os || "Ładowanie szczegółów systemu..."}</div>
-          <div className="spec-sub">Wersja Pythona: {specs?.python_version}</div>
+          <div className="spec-sub">Wersja platformy: {specs?.python_version}</div>
         </div>
       </div>
 
-      {/* Live Resource Utilization Gauges */}
+      {/* Sekcja monitorowania obciążenia na żywo */}
       <div className="live-section">
         
-        {/* CPU Monitoring Card */}
+        {/* Karta monitorowania obciążenia CPU */}
         <div className="live-card glass-panel">
           <div className="live-card-header">
             <span className="live-card-title">Użycie procesora</span>
@@ -135,7 +143,7 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
             </div>
           </div>
 
-          {/* Thread Load Breakdown */}
+          {/* Podział obciążenia na poszczególne rdzenie procesora */}
           {localLive?.cpu_percent_per_core && (
             <div>
               <div className="spec-label" style={{ marginBottom: "10px" }}>Obciążenie poszczególnych rdzeni</div>
@@ -158,7 +166,7 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
           )}
         </div>
 
-        {/* RAM Monitoring Card */}
+        {/* Karta monitorowania alokacji pamięci RAM */}
         <div className="live-card glass-panel">
           <div className="live-card-header">
             <span className="live-card-title">Alokacja pamięci</span>
@@ -192,16 +200,16 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
             </div>
           </div>
 
-          {/* Real-time Scrolling Activity Chart */}
+          {/* Wykres historyczny aktywności rysowany na żywo (SVG line) */}
           <div style={{ marginTop: "10px" }}>
             <div className="spec-label" style={{ marginBottom: "10px" }}>Historia aktywności (Na żywo)</div>
             <div style={{ background: "rgba(0,0,0,0.2)", borderRadius: "8px", border: "1px solid var(--border-color)", padding: "10px", display: "flex", justifyContent: "center" }}>
               <svg width="100%" height={chartHeight} viewBox={`0 0 ${chartWidth} ${chartHeight}`} preserveAspectRatio="none">
-                {/* Horizontal Gridlines */}
+                {/* Przerywane linie pomocnicze siatki */}
                 <line x1="0" y1={chartHeight / 2} x2={chartWidth} y2={chartHeight / 2} stroke="rgba(255,255,255,0.05)" strokeDasharray="4,4" />
                 <line x1="0" y1={chartHeight - padding} x2={chartWidth} y2={chartHeight - padding} stroke="rgba(255,255,255,0.1)" />
                 
-                {/* CPU Line */}
+                {/* Linia zużycia procesora (Cyan) */}
                 {cpuPoints && (
                   <polyline
                     fill="none"
@@ -211,7 +219,7 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
                     style={{ filter: "drop-shadow(0px 0px 4px rgba(0, 229, 255, 0.4))" }}
                   />
                 )}
-                {/* RAM Line */}
+                {/* Linia zużycia pamięci RAM (Purple) */}
                 {ramPoints && (
                   <polyline
                     fill="none"
@@ -223,6 +231,7 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
                 )}
               </svg>
             </div>
+            {/* Legenda wykresu */}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "16px", marginTop: "8px", fontSize: "12px" }}>
               <span style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--accent-cyan)" }}>
                 <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--accent-cyan)" }}></span> Obciążenie CPU
@@ -236,7 +245,7 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
         </div>
       </div>
 
-      {/* Quick Action */}
+      {/* Szybka akcja przekierowania do panelu testów */}
       <div className="glass-panel" style={{ padding: "20px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
           <h3 style={{ fontSize: "16px", fontWeight: "700", marginBottom: "4px" }}>Gotowy na ocenę swojego systemu?</h3>
@@ -251,6 +260,7 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
   );
 }
 
+// Funkcja pomocnicza zaokrąglająca taktowanie procesora z MHz do GHz
 function roundFreq(mhz) {
   return (mhz / 1000).toFixed(2);
 }

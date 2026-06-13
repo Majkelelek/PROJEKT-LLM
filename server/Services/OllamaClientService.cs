@@ -11,24 +11,26 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using NeuroBench.Backend.Models;
+using ProjektAI.Backend.Models;
 
-namespace NeuroBench.Backend.Services
+namespace ProjektAI.Backend.Services
 {
+    // Klient HTTP do komunikacji z lokalną usługą Ollama na porcie 11434.
     public class OllamaClientService
     {
         private const string OllamaBaseUrl = "http://localhost:11434";
         private readonly HttpClient _httpClient;
         private readonly ILogger<OllamaClientService> _logger;
 
+        // Inicjalizacja klienta i ustawienie limitu czasu (timeout) na 15 minut (potrzebne przy cięższych modelach/raportach)
         public OllamaClientService(HttpClient httpClient, ILogger<OllamaClientService> logger)
         {
             _httpClient = httpClient;
             _logger = logger;
-            // Configure default timeouts
-            _httpClient.Timeout = TimeSpan.FromMinutes(15); // Long timeout for generating reports or benchmarks
+            _httpClient.Timeout = TimeSpan.FromMinutes(15);
         }
 
+        // Sprawdza czy usługa Ollama działa, wysyłając szybkie zapytanie do API tags
         public async Task<bool> IsOllamaRunningAsync()
         {
             try
@@ -43,6 +45,7 @@ namespace NeuroBench.Backend.Services
             }
         }
 
+        // Pobiera listę nazw wszystkich modeli pobranych lokalnie w Ollamie
         public async Task<List<string>> GetOllamaModelsAsync()
         {
             var modelsList = new List<string>();
@@ -67,17 +70,20 @@ namespace NeuroBench.Backend.Services
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to get models from Ollama");
+                _logger.LogWarning(ex, "Nie udało się pobrać listy modeli z usługi Ollama");
             }
             return modelsList;
         }
 
-        public async Task<OllamaResult> RunLlmBenchmarkAsync(string model, string complexity = "medium")
+        // Uruchamia test wydajnościowy (Benchmark) dla wybranego modelu LLM na określonym poziomie złożoności.
+        // Opcjonalnie przyjmuje SystemInfoService do próbkowania metryk GPU i RAM podczas testu.
+        public async Task<OllamaResult> RunLlmBenchmarkAsync(string model, string complexity = "medium", SystemInfoService? sysInfo = null)
         {
             string prompt;
             int numPredict;
             double temp;
 
+            // Dobór parametrów testu i promptu w zależności od poziomu złożoności wybranego przez użytkownika
             switch (complexity?.ToLower())
             {
                 case "quick":
@@ -107,52 +113,92 @@ namespace NeuroBench.Backend.Services
                 {
                     temperature = temp,
                     num_predict = numPredict,
-                    num_gpu = -1
+                    num_gpu = -1 // Pozwól Ollamie zdecydować o automatycznym podziale warstw na GPU/CPU
                 }
             };
 
+            // Próbkowanie metryk GPU i systemowych PRZED uruchomieniem wnioskowania
+            var gpuBefore = sysInfo != null ? await sysInfo.GetNvidiaSmiAsync() : new System.Collections.Generic.Dictionary<string, double>();
+            var (ramBefore, _, _, _) = sysInfo != null ? sysInfo.GetSystemSnapshot() : (0, 0, 0, 0);
+
             var stopwatch = Stopwatch.StartNew();
             
-            _logger.LogInformation("Sending benchmark request to Ollama for model: {Model} (complexity: {Complexity})", model, complexity);
+            _logger.LogInformation("Wysyłanie żądania benchmarku do Ollama dla modelu: {Model} (złożoność: {Complexity})", model, complexity);
             var response = await _httpClient.PostAsJsonAsync($"{OllamaBaseUrl}/api/generate", payload);
             stopwatch.Stop();
+
+            // Próbkowanie metryk GPU i systemowych PO zakończeniu wnioskowania
+            var gpuAfter = sysInfo != null ? await sysInfo.GetNvidiaSmiAsync() : new System.Collections.Generic.Dictionary<string, double>();
+            var (ramAfterUsed, ramAfterTotal, ramAfterPct, cpuAfterPct) = sysInfo != null ? sysInfo.GetSystemSnapshot() : (0, 0, 0, 0);
 
             if (!response.IsSuccessStatusCode)
             {
                 var errorText = await response.Content.ReadAsStringAsync();
-                throw new Exception($"Ollama returned status {response.StatusCode}: {errorText}");
+                throw new Exception($"Usługa Ollama zwróciła status {response.StatusCode}: {errorText}");
             }
 
             var data = await response.Content.ReadFromJsonAsync<OllamaGenerateResponse>();
             if (data == null)
             {
-                throw new Exception("Ollama returned an empty response.");
+                throw new Exception("Usługa Ollama zwróciła pustą odpowiedź.");
             }
 
+            // Przeliczanie nanosekund zwracanych przez Ollama na sekundy oraz obliczenie wskaźników wydajnościowych
             double totalDurationSec = data.TotalDuration / 1e9;
             if (totalDurationSec <= 0) totalDurationSec = stopwatch.Elapsed.TotalSeconds;
 
-            double latencySec = (data.LoadDuration + data.PromptEvalDuration) / 1e9;
+            double loadDurationSec = data.LoadDuration / 1e9;
+            double promptEvalDurationSec = data.PromptEvalDuration / 1e9;
+            double latencySec = loadDurationSec + promptEvalDurationSec;
             if (latencySec <= 0) latencySec = stopwatch.Elapsed.TotalSeconds;
 
             double evalDurationSec = data.EvalDuration / 1e9;
             double tokensPerSec = evalDurationSec > 0 ? data.EvalCount / evalDurationSec : 0;
+            double promptEvalTokensPerSec = promptEvalDurationSec > 0 ? data.PromptEvalCount / promptEvalDurationSec : 0;
 
-            double promptEvalSec = data.PromptEvalDuration / 1e9;
-            double promptEvalTokensPerSec = promptEvalSec > 0 ? data.PromptEvalCount / promptEvalSec : 0;
+            // Użyjemy wartości zmierzone PO teście (szczyt zużycia) jako bardziej reprezentatywnych
+            bool gpuAvailable = gpuAfter.Count > 0;
+            gpuAfter.TryGetValue("vram_used_mb", out double vramUsed);
+            gpuAfter.TryGetValue("vram_total_mb", out double vramTotal);
+            gpuAfter.TryGetValue("gpu_util", out double gpuUtil);
+            gpuAfter.TryGetValue("power_draw", out double powerDraw);
+            gpuAfter.TryGetValue("power_limit", out double powerLimit);
+            gpuAfter.TryGetValue("temperature", out double gpuTemp);
 
             return new OllamaResult
             {
                 Model = model,
                 Response = data.Response,
+
+                // Czasy Ollama (verbose)
                 TotalTimeSec = Math.Round(totalDurationSec, 2),
+                LoadDurationSec = Math.Round(loadDurationSec, 2),
                 LatencySec = Math.Round(latencySec, 2),
-                TokensPerSec = Math.Round(tokensPerSec, 2),
+                PromptEvalCount = data.PromptEvalCount,
+                PromptEvalDurationSec = Math.Round(promptEvalDurationSec, 2),
                 PromptEvalTokensPerSec = Math.Round(promptEvalTokensPerSec, 2),
-                TokensGenerated = data.EvalCount
+                TokensGenerated = data.EvalCount,
+                EvalDurationSec = Math.Round(evalDurationSec, 2),
+                TokensPerSec = Math.Round(tokensPerSec, 2),
+
+                // Metryki GPU (nvidia-smi)
+                GpuMetricsAvailable = gpuAvailable,
+                GpuVramUsedMb = (long)vramUsed,
+                GpuVramTotalMb = (long)vramTotal,
+                GpuUtilPercent = Math.Round(gpuUtil, 1),
+                GpuPowerDrawW = Math.Round(powerDraw, 1),
+                GpuPowerLimitW = Math.Round(powerLimit, 1),
+                GpuTempC = Math.Round(gpuTemp, 1),
+
+                // Metryki systemowe (WMI)
+                SysRamUsedGb = ramAfterUsed,
+                SysRamTotalGb = ramAfterTotal,
+                SysRamPercent = ramAfterPct,
+                SysCpuPercent = Math.Round(cpuAfterPct, 1)
             };
         }
 
+        // Generuje kompleksowy raport z analizy AI wydajności systemu za pomocą LLM w Ollamie
         public async Task<string> GenerateAiReportAsync(SystemSpecs specs, BenchmarkResults results, string model, string complexity = "medium")
         {
             var gpusJoined = string.Join(", ", specs.Gpus);
@@ -166,6 +212,7 @@ namespace NeuroBench.Backend.Services
             int numPredict;
             double temp;
 
+            // Syntetyzowanie dedykowanego promptu do analizy AI w zależności od wybranego poziomu złożoności raportu
             switch (complexity?.ToLower())
             {
                 case "quick":
@@ -253,20 +300,21 @@ Raport must być w całości napisany w języku polskim. Użyj profesjonalnego, 
                 }
             };
 
-            _logger.LogInformation("Generating AI Report using model: {Model} (complexity: {Complexity})", model, complexity);
+            _logger.LogInformation("Generowanie raportu AI przy użyciu modelu: {Model} (złożoność: {Complexity})", model, complexity);
             var response = await _httpClient.PostAsJsonAsync($"{OllamaBaseUrl}/api/generate", payload);
             if (response.IsSuccessStatusCode)
             {
                 var data = await response.Content.ReadFromJsonAsync<OllamaGenerateResponse>();
-                return data?.Response ?? "Error: Empty response from Ollama";
+                return data?.Response ?? "Błąd: Pusta odpowiedź z usługi Ollama";
             }
             else
             {
                 var errorText = await response.Content.ReadAsStringAsync();
-                return $"Error running Ollama report generation: {errorText}";
+                return $"Błąd podczas generowania raportu przez Ollama: {errorText}";
             }
         }
 
+        // Strumieniuje w czasie rzeczywistym (asynchroniczny generator) odpowiedź eksperckiego czatu AI na pytania użytkownika
         public async IAsyncEnumerable<string> StreamChatResponseAsync(
             string model,
             SystemSpecs specs,
@@ -281,6 +329,7 @@ Raport must być w całości napisany w języku polskim. Użyj profesjonalnego, 
             var latency = ollamaRes?.LatencySec ?? 0;
             var testedModel = ollamaRes?.Model ?? "Brak";
 
+            // Prompt systemowy precyzujący rolę czatu AI i uniemożliwiający halucynacje (zakaz wymyślania danych sprzętu)
             var systemPrompt = $@"
 Jesteś ""Asystentem AI ds. Sprzętu"" (Hardware AI Analyst) – wyspecjalizowanym asystentem wbudowanym w panel benchmarkowy.
 Twoim jedynym zadaniem jest odpowiadanie po polsku na pytania użytkownika dotyczące jego systemu pod kątem lokalnego uruchamiania LLM, bazując wyłącznie na poniższych danych.
@@ -342,8 +391,8 @@ Odpowiadaj wyłącznie w oparciu o powyższe dane. Pisz bezpośrednio, konkretni
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to connect to Ollama chat endpoint");
-                connectionError = $"\n[AI Chat Connection Error: {ex.Message}]";
+                _logger.LogError(ex, "Nie udało się połączyć z punktem końcowym czatu Ollama");
+                connectionError = $"\n[Błąd połączenia z czatem AI: {ex.Message}]";
             }
 
             if (connectionError != null)
@@ -354,15 +403,16 @@ Odpowiadaj wyłącznie w oparciu o powyższe dane. Pisz bezpośrednio, konkretni
 
             if (response == null || !response.IsSuccessStatusCode)
             {
-                var code = response?.StatusCode.ToString() ?? "Unknown";
-                var errText = response != null ? await response.Content.ReadAsStringAsync(cancellationToken) : "No response";
-                yield return $"\n[AI Chat Error: {code} - {errText}]";
+                var code = response?.StatusCode.ToString() ?? "Nieznany";
+                var errText = response != null ? await response.Content.ReadAsStringAsync(cancellationToken) : "Brak odpowiedzi";
+                yield return $"\n[Błąd czatu AI: {code} - {errText}]";
                 yield break;
             }
 
             using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var reader = new StreamReader(stream);
 
+            // Odczyt linii strumienia JSON zwracanych w czasie rzeczywistym z API Ollama i przesyłanie fragmentów tekstu do frontendu
             while (!reader.EndOfStream)
             {
                 var line = await reader.ReadLineAsync(cancellationToken);
@@ -376,7 +426,7 @@ Odpowiadaj wyłącznie w oparciu o powyższe dane. Pisz bezpośrednio, konkretni
                 }
                 catch
                 {
-                    // Ignore malformed JSON lines
+                    // Ignoruj niepoprawne linie formatu JSON
                 }
 
                 if (!string.IsNullOrEmpty(chunkText))
@@ -386,7 +436,7 @@ Odpowiadaj wyłącznie w oparciu o powyższe dane. Pisz bezpośrednio, konkretni
             }
         }
 
-        // --- Inner helper classes for JSON deserialization ---
+        // --- Wewnętrzne klasy pomocnicze do deserializacji JSON ---
 
         private class OllamaTagsResponse
         {

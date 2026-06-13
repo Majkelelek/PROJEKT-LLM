@@ -1,19 +1,19 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 
+// Komponent HistoryPanel służący do wyświetlania, usuwania oraz eksportowania archiwalnych przebiegów testów.
 export default function HistoryPanel({ onSelectRun, activeRunId }) {
-  // Przechowuje listę historycznych testów
-  const [runs, setRuns] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [runs, setRuns] = useState([]); // Lista historycznych przebiegów benchmarków
+  const [loading, setLoading] = useState(true); // Status ładowania historii
 
-  // Funkcja pobierająca listę raportów z backendu
+  // Pobieranie listy raportów z pamięci przeglądarki (localStorage)
   const fetchRuns = () => {
     try {
-      const localData = localStorage.getItem("neurobench_history");
+      const localData = localStorage.getItem("projekt_ai_history");
       const data = localData ? JSON.parse(localData) : [];
       // Sortowanie chronologiczne od najnowszego do najstarszego
       setRuns(data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)));
     } catch (err) {
-      console.error("Failed to load reports from localStorage:", err);
+      console.error("Błąd podczas pobierania raportów z localStorage:", err);
     } finally {
       setLoading(false);
     }
@@ -21,30 +21,32 @@ export default function HistoryPanel({ onSelectRun, activeRunId }) {
 
   // Ładowanie historii na starcie panelu
   useEffect(() => {
-    fetchRuns();
+    setTimeout(() => {
+      fetchRuns();
+    }, 0);
   }, []);
 
-  // Usunięcie wybranego wpisu z bazy i odświeżenie widoku
+  // Usunięcie wybranego wpisu na podstawie ID z localStorage
   const handleDelete = (id, e) => {
-    e.stopPropagation(); // Powstrzymujemy przeładowanie i wybranie usuwanej pozycji
+    e.stopPropagation(); // Powstrzymujemy wybranie danej pozycji jako aktywnej w tle
     if (!window.confirm("Czy na pewno chcesz usunąć ten rekord testu wydajności?")) return;
 
     try {
-      const localData = localStorage.getItem("neurobench_history");
+      const localData = localStorage.getItem("projekt_ai_history");
       const data = localData ? JSON.parse(localData) : [];
       const filtered = data.filter(r => r.id !== id);
-      localStorage.setItem("neurobench_history", JSON.stringify(filtered));
+      localStorage.setItem("projekt_ai_history", JSON.stringify(filtered));
       setRuns(filtered.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)));
     } catch (err) {
-      console.error("Failed to delete record from localStorage:", err);
+      console.error("Błąd podczas usuwania rekordu z localStorage:", err);
     }
   };
 
-  // Eksportowanie surowego obiektu JSON jako plik do pobrania
+  // Eksport surowych danych całego rekordu w formacie JSON do pobrania
   const handleExportJson = (run, e) => {
     e.stopPropagation();
     const dateStr = new Date(run.timestamp).toLocaleDateString().replace(/\//g, "-");
-    const filename = `NeuroBench_Data_${dateStr}.json`;
+    const filename = `Projekt_AI_Dane_${dateStr}.json`;
     const element = document.createElement("a");
     const file = new Blob([JSON.stringify(run, null, 2)], { type: "application/json" });
     element.href = URL.createObjectURL(file);
@@ -54,11 +56,11 @@ export default function HistoryPanel({ onSelectRun, activeRunId }) {
     document.body.removeChild(element);
   };
 
-  // Eksportowanie raportu tekstowego Markdown stworzonego przez AI
+  // Eksport wygenerowanego raportu AI w formacie tekstowym Markdown (.md)
   const handleDownloadMarkdown = (run, e) => {
     e.stopPropagation();
     const dateStr = new Date(run.timestamp).toLocaleDateString().replace(/\//g, "-");
-    const filename = `NeuroBench_Report_${dateStr}.md`;
+    const filename = `Projekt_AI_Raport_${dateStr}.md`;
     const element = document.createElement("a");
     const file = new Blob([run.ai_report], { type: "text/markdown" });
     element.href = URL.createObjectURL(file);
@@ -113,13 +115,13 @@ export default function HistoryPanel({ onSelectRun, activeRunId }) {
                 }}
                 onClick={() => onSelectRun(run)}
               >
-                {/* Data wykonania */}
+                {/* Data wykonania testu */}
                 <div className="history-date">
                   <div style={{ fontSize: "12px", color: "var(--text-muted)", textTransform: "uppercase" }}>Czas wykonania testu</div>
                   <div style={{ fontWeight: "700", marginTop: "4px", color: isLoaded ? "var(--accent-cyan)" : "var(--text-primary)" }}>{formattedDate}</div>
                 </div>
 
-                {/* Główne podzespoły */}
+                {/* Zapisana specyfikacja procesora, RAMu oraz model testowy */}
                 <div className="history-specs">
                   <div className="history-cpu">{run.specs?.cpu_model}</div>
                   <div className="history-sub" style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
@@ -153,19 +155,8 @@ export default function HistoryPanel({ onSelectRun, activeRunId }) {
                   </div>
                 </div>
 
-                {/* Podgląd wyników liczbowych */}
+                {/* Podgląd skróconych wyników liczbowych (tokens/sec) */}
                 <div className="history-scores">
-                  {/* Wsparcie dla historycznych wyników CPU/RAM/Ollama */}
-                  {run.results?.cpu && !run.results.cpu.error && (
-                    <div className="score-badge cyan">
-                      CPU: {run.results.cpu.multi_score}
-                    </div>
-                  )}
-                  {run.results?.memory && !run.results.memory.error && (
-                    <div className="score-badge">
-                      RAM: {Math.round(run.results.memory.read_speed_mbs)} MB/s
-                    </div>
-                  )}
                   {run.results?.ollama && !run.results.ollama.error && run.results.ollama.tokens_per_sec > 0 && (
                     <div className="score-badge" style={{ color: "var(--accent-purple)", borderColor: "rgba(213, 0, 249, 0.15)" }}>
                       LLM: {run.results.ollama.tokens_per_sec} t/s
@@ -173,7 +164,7 @@ export default function HistoryPanel({ onSelectRun, activeRunId }) {
                   )}
                 </div>
 
-                {/* Przyciski akcji (Eksporty, usuwanie) */}
+                {/* Przyciski operacyjne */}
                 <div className="history-actions">
                   <button 
                     className="icon-btn" 

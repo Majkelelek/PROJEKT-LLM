@@ -1,6 +1,6 @@
-# NeuroBench AI - Specyfikacja Techniczna i Struktura Projektu
+# Projekt AI - Specyfikacja Techniczna i Struktura Projektu
 
-Niniejszy plik zawiera szczegółowy opis architektury systemu NeuroBench AI, wszystkich plików wchodzących w skład aplikacji, importów (`using` / `import`), parametrów promptów LLM oraz szczegółowy opis mechanizmu zapisu i migracji logów historycznych.
+Niniejszy plik zawiera szczegółowy opis architektury systemu Projekt AI, wszystkich plików wchodzących w skład aplikacji, importów (`using` / `import`), parametrów promptów LLM oraz szczegółowy opis mechanizmu zapisu i migracji logów historycznych.
 
 ---
 
@@ -59,8 +59,8 @@ Aby uruchomić i rozwijać aplikację, w systemie operacyjnym Windows muszą by�
   using Microsoft.Extensions.DependencyInjection;
   using Microsoft.Extensions.Hosting;
   using Microsoft.Extensions.Logging;
-  using NeuroBench.Backend.Models;
-  using NeuroBench.Backend.Services;
+  using ProjektAI.Backend.Models;
+  using ProjektAI.Backend.Services;
   ```
 * **Opis:** Główny entrypoint backendu ASP.NET Core Web API. Konfiguruje serwer Kestrel na porcie `8000`, rejestruje serwisy jako Singletony (`SystemInfoService`, `DbService`, `OllamaClientService`), włącza reguły CORS (dla portu `5173`) oraz definiuje minimalistyczne endpointy API (system info, live metrics, lista modeli, pobieranie/kasowanie logów, uruchamianie benchmarku SSE, oraz generowanie raportów).
 
@@ -75,7 +75,7 @@ Aby uruchomić i rozwijać aplikację, w systemie operacyjnym Windows muszą by�
   using System.Runtime.InteropServices;
   using Microsoft.Extensions.Logging;
   using Microsoft.Win32;
-  using NeuroBench.Backend.Models;
+  using ProjektAI.Backend.Models;
   ```
 * **Opis:** Usługa zbierająca specyfikację komputera. Pobiera statyczne informacje o procesorze (z rejestru systemu Windows pod kluczem `CentralProcessor\0`), pamięci RAM oraz GPU (za pomocą WMI). Uruchamia również zapytania dynamiczne (live telemetry) o stopień obciążenia wątków CPU i wolnego RAM.
 
@@ -96,7 +96,7 @@ Aby uruchomić i rozwijać aplikację, w systemie operacyjnym Windows muszą by�
   using System.Threading;
   using System.Threading.Tasks;
   using Microsoft.Extensions.Logging;
-  using NeuroBench.Backend.Models;
+  using ProjektAI.Backend.Models;
   ```
 * **Opis:** Klient łączący się z lokalnym API Ollama (`http://localhost:11434`). Odpytuje o status serwisu, pobiera listę modeli (`/api/tags`), przeprowadza test wnioskowania benchmarkowego (`/api/generate`) oraz odpowiada za wygenerowanie pełnego raportu eksperckiego z analizą kompatybilności sprzętowej.
 
@@ -159,7 +159,7 @@ Aby uruchomić i rozwijać aplikację, w systemie operacyjnym Windows muszą by�
 Wyniki pomiarów oraz wygenerowane raporty są zapisywane wyłącznie po stronie klienta (przeglądarki) z użyciem mechanizmu **`localStorage`**. Backend ASP.NET Core odpowiada jedynie za pomiary i generowanie raportów, nie przechowując żadnych danych historycznych na serwerze.
 
 ### A. Gdzie i jak zapisują się pliki logów?
-* **Klucz w storage:** Wszystkie wyniki są przechowywane pod kluczem **`neurobench_history`** w domenie i porcie frontendu (np. `http://localhost:5173`).
+* **Klucz w storage:** Wszystkie wyniki są przechowywane pod kluczem **`projekt_ai_history`** w domenie i porcie frontendu (np. `http://localhost:5173`).
 * **Inicjalizacja:** Przy uruchomieniu aplikacji React, w komponencie `App.jsx` pobierana jest lista logów z `localStorage`. Najnowszy pomiar ustawiany jest jako domyślny aktywny widok w zakładkach raportu AI.
 * **Dodawanie wyników:** Po pomyślnym zakończeniu benchmarku, dane z SSE (zawierające specyfikację, metryki oraz gotowy raport AI) są odbierane przez `BenchmarkPanel.jsx`, a następnie przekazywane do `App.jsx`, gdzie zostają dodane do tablicy w `localStorage` i zapisane jako ciąg znaków JSON.
 * **Usuwanie wpisów:** W zakładce `HistoryPanel.jsx` użytkownik może usunąć dowolny rekord, co powoduje wyfiltrowanie tablicy i ponowne zapisanie zaktualizowanej listy w `localStorage`.

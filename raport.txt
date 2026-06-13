@@ -1,9 +1,9 @@
 =============================================================================
-                  NEUROBENCH AI - RAPORT TECHNICZNY PROJEKTU
+                  PROJEKT AI - RAPORT TECHNICZNY PROJEKTU
 =============================================================================
 
 Niniejszy raport zawiera wyczerpujący opis technologii, architektury, mechanizmów
-komunikacyjnych oraz komend wykorzystywanych w projekcie NeuroBench AI.
+komunikacyjnych oraz komend wykorzystywanych w projekcie Projekt AI.
 
 -----------------------------------------------------------------------------
 1. WYKORZYSTANE TECHNOLOGIE I ICH ROLA W PROJEKCIE
@@ -18,7 +18,8 @@ A. FRONTEND: React (Vite + Vanilla CSS + JavaScript)
      * Dashboard.jsx: Kokpit telemetrii. Wizualizuje obciążenie CPU na poziomie
        poszczególnych wątków za pomocą reaktywnych pasków postępu SVG.
      * BenchmarkPanel.jsx: Pozwala wybrać model LLM oraz stopień trudności promptu,
-       obsługuje nasłuchiwanie strumienia logów SSE z serwera i wyświetla wyniki.
+        obsługuje nasłuchiwanie strumienia logów SSE z serwera i wyświetla wyniki
+        w postaci pełnej tabeli metryk (czasowe Ollama /verbose, GPU nvidia-smi, RAM/CPU).
      * CompatibilityPanel.jsx: Interaktywny kalkulator szacujący rozkład warstw
        modelu w pamięci VRAM GPU oraz pamięci systemowej RAM (offloading).
      * AIAnalyst.jsx: Prezentuje ustrukturyzowany raport wygenerowany przez LLM
@@ -26,7 +27,7 @@ A. FRONTEND: React (Vite + Vanilla CSS + JavaScript)
      * HistoryPanel.jsx: Lista archiwalnych testów pobierana z localStorage.
    - Zarządzanie Historią (localStorage):
      * Cała historia testów jest zapisywana w przeglądarce pod kluczem
-       "neurobench_history". Dane są zapisywane jako zdeserializowana tablica
+       "projekt_ai_history". Dane są zapisywane jako zdeserializowana tablica
        obiektów JSON. Rozwiązanie to uniezależnia historię od restartów backendu.
 
 B. BACKEND: ASP.NET Core (Web API - .NET 8.0)
@@ -36,10 +37,14 @@ B. BACKEND: ASP.NET Core (Web API - .NET 8.0)
      lekkiego, wbudowanego serwera Kestrel na porcie 8000.
    - Usługi rejestrowane w kontenerze Dependency Injection (DI) jako Singletony:
      * SystemInfoService: Pobiera statyczne informacje o sprzęcie (rejestr
-       Windows, zapytania WMI przez System.Management) oraz dynamiczne parametry
-       użycia procesora i RAM (obciążenie globalne i na rdzeń).
-     * OllamaClientService: Klient HTTP zarządzający odpytywaniem lokalnego API
-       Ollamy, przetwarzaniem odpowiedzi oraz generowaniem raportów eksperckich.
+        Windows, zapytania WMI przez System.Management) oraz dynamiczne parametry
+        użycia procesora i RAM (obciążenie globalne i na rdzeń). Udostępnia również
+        metodę GetNvidiaSmiAsync() do próbkowania metryk GPU przez nvidia-smi
+        oraz GetSystemSnapshot() do szybkiej migawki RAM/CPU podczas benchmarku.
+      * OllamaClientService: Klient HTTP zarządzający odpytywaniem lokalnego API
+        Ollamy, przetwarzaniem odpowiedzi oraz generowaniem raportów eksperckich.
+        Metoda RunLlmBenchmarkAsync() próbkuje metryki GPU i systemu przed/po
+        teście wnioskowania i zwraca rozszerzony obiekt OllamaResult.
 
 C. LOKALNY SILNIK LLM: Ollama (Local AI Engine)
    - Lokalny serwer uruchamiający modele LLM (np. Llama 3.1, Phi-3, Mistral),
@@ -88,11 +93,14 @@ Serwer ASP.NET Core wystawia następujące endpointy HTTP/SSE dla frontendu:
    - Pobiera listę modeli zainstalowanych lokalnie w Ollamie.
    - Pobiera dane bezpośrednio z Ollamy i przesyła je w ustrukturyzowanej formie.
 
-4. GET /api/benchmark/run-stream?model={nazwa}&complexity={quick/medium/complex}
+4. POST /api/benchmark/run-stream
    - Uruchamia test wydajności w formie Server-Sent Events (SSE).
    - Strumieniuje w czasie rzeczywistym postęp testu (np. "Inicjalizacja",
      "Wysyłanie zapytania", "Analiza AI"), a na sam koniec przesyła event
      "finished" z kompletnym obiektem BenchmarkRun (DTO).
+   - UWAGA: Używa bezpośredniego context.Response.WriteAsync() zamiast StreamWriter,
+     aby uniknąć błędu ERR_INCOMPLETE_CHUNKED_ENCODING (StreamWriter z blokiem using
+     dispose'uje strumień HTTP zbyt wcześnie).
 
 5. POST /api/chat
    - Umożliwia wysłanie historii rozmowy z doradcą AI.
@@ -139,11 +147,12 @@ B. Uruchomienie wnioskowania (Test benchmarkowy)
          "temperature": 0.0
        }
      }
-     * stream: Ustawione na false, aby otrzymać jedną kompletną odpowiedź wraz
-       z pełnymi metrykami czasu wykonania w nanosekundach.
-     * num_predict: Limit generowania tokenów. W zależności od profilu trudności
-       wynosi odpowiednio: 120 (szybki), 600 (średni), 1500 (złożony).
-     * temperature: Ustawione na 0.0 dla zapewnienia determinizmu pomiarów.
+      * stream: Ustawione na false, aby otrzymać jedną kompletną odpowiedź wraz
+        z pełnymi metrykami czasu wykonania w nanosekundach.
+      * num_predict: Limit generowania tokenów. W zależności od profilu trudności
+        wynosi odpowiednio: 1200 (szybki), 6000 (średni), 15000 (złożony).
+      * temperature: 0.1 / 0.4 / 0.7 w zależności od złożoności (wyższa temp.
+        dla dłuższych promptsów, niższa zapewnia bardziej deterministyczne wyniki).
 
 C. Struktura odpowiedzi z Ollama (/api/generate)
    Po zakończeniu generowania, Ollama zwraca szczegółowe metryki wydajności:
@@ -204,7 +213,63 @@ wydajności według następujących wzorów:
    TokensPerSec = eval_count / (eval_duration / 1,000,000,000.0)
 
 4. Prędkość przetwarzania promptu wejściowego (Prompt Eval Tokens per Second [t/s]):
-   PromptEvalTokensPerSec = prompt_eval_count / (prompt_eval_duration / 1,000,000,000.0)
+   PromptEvalTokensPerSec = prompt_eval_count / (prompt_eval_duration / 1 000 000 000.0)
+
+5. Czas ładowania modelu do pamięci (Load Duration [s]):
+   LoadDurationSec = load_duration / 1 000 000 000.0
+
+6. Czas przetwarzania promptu (Prompt Eval Duration [s]):
+   PromptEvalDurationSec = prompt_eval_duration / 1 000 000 000.0
+
+7. Czas generowania odpowiedzi (Eval Duration [s]):
+   EvalDurationSec = eval_duration / 1 000 000 000.0
+
+Wszystkie pola są mapowane na rozszerzony model OllamaResult i przesyłane do
+frontendu jako część obiektu BenchmarkRun (pole results.ollama).
+
+-----------------------------------------------------------------------------
+4b. METRYKI GPU I SYSTEMU (nvidia-smi + WMI) — POBIERANE PODCZAS BENCHMARKU
+-----------------------------------------------------------------------------
+
+Oprócz metryk Ollamy, backend próbkuje również stan sprzętu w momencie testu.
+
+A. Metryki GPU — nvidia-smi (SystemInfoService.GetNvidiaSmiAsync)
+   Metoda wywołuje zewnętrzne narzędzie nvidia-smi z parametrami:
+   > nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu,
+               power.draw,power.limit,temperature.gpu
+               --format=csv,noheader,nounits
+
+   Zwracane wartości (pobierane PO zakończeniu wnioskowania):
+   - gpu_vram_used_mb     : Użyta pamięć VRAM podczas testu [MB]
+   - gpu_vram_total_mb    : Całkowita pamięć VRAM karty [MB]
+   - gpu_util_percent     : Obciążenie rdzeni GPU [%]
+   - gpu_power_draw_w     : Chwilowy pobór mocy karty [W]
+   - gpu_power_limit_w    : Limit mocy TDP karty [W]
+   - gpu_temp_c           : Temperatura rdzenia GPU [°C]
+   - gpu_metrics_available: true/false — czy nvidia-smi było dostępne na tym systemie
+
+   Uwaga: Jeśli użytkownik nie ma karty NVIDIA lub nie ma zainstalowanych sterowników
+   NVIDIA, pole gpu_metrics_available = false i sekcja GPU w UI wyświetla komunikat
+   o niedostępności.
+
+B. Metryki systemowe — WMI (SystemInfoService.GetSystemSnapshot)
+   Metoda wywołuje krótkie zapytania WMI po zakończeniu testu:
+   - Win32_OperatingSystem: Pobiera użytą i całkowitą pamięć RAM.
+   - Win32_PerfFormattedData_PerfOS_Processor WHERE Name=\'_Total\': Pobiera
+     łączne obciążenie CPU.
+
+   Zwracane wartości:
+   - sys_ram_used_gb  : Pamięć RAM używana podczas testu [GB]
+   - sys_ram_total_gb : Całkowita pamięć RAM systemu [GB]
+   - sys_ram_percent  : Procentowe zajęcie RAM [%]
+   - sys_cpu_percent  : Łączne obciążenie procesora podczas testu [%]
+
+C. Wyświetlanie w UI (BenchmarkPanel.jsx)
+   Po zakończeniu testu, wszystkie metryki są prezentowane w trojsegmentowej
+   tabeli (odpowiednik /set verbose w Ollama CLI):
+   - Sekcja 1 (niebieski nagłówek): Czasy wnioskowania Ollamy (verbose)
+   - Sekcja 2 (fioletowy nagłówek): GPU z nvidia-smi (lub info o braku NVIDIA)
+   - Sekcja 3 (zielony nagłówek): Systemowe RAM i CPU (migawka WMI)
 
 -----------------------------------------------------------------------------
 5. KOMENDY UŻYWANE W PROJEKCIE (ŚCIĄGAWKA)
@@ -263,11 +328,21 @@ B. Wymagania Sprzętowe i Programowe:
        z minimum 6 GB pamięci VRAM (np. RTX 3060/4060) w celu uzyskania satysfakcjonującej
        wydajności (prędkości generowania tokenów powyżej 15 t/s).
      * Dysk twardy: SSD z co najmniej 15-30 GB wolnego miejsca na lokalne modele LLM.
-   - Wymagania programowe (Systemowe):
-     * System operacyjny: Microsoft Windows 10 lub 11 (64-bit).
-     * Środowisko .NET SDK 8.0 (lub nowsze) zainstalowane lokalnie.
-     * Środowisko Node.js (wersja LTS, zalecana 18.x lub nowsza).
-     * Zainstalowany i uruchomiony serwer Ollama w wersji dla systemu Windows.
+    - Wymagania programowe (Systemowe):
+      * System operacyjny: Microsoft Windows 10 lub 11 (64-bit).
+      * Środowisko .NET SDK 8.0 (lub nowsze) zainstalowane lokalnie.
+      * Środowisko Node.js (wersja LTS, zalecana 18.x lub nowsza).
+      * Zainstalowany i uruchomiony serwer Ollama w wersji dla systemu Windows.
+      * nvidia-smi — zewnętrzne narzędzie systemowe NVIDIA (nie jest
+        to biblioteka NuGet ani pakiet npm). Jest instalowane automatycznie razem
+        ze sterownikami karty graficznej NVIDIA (CUDA Driver). Backend wywołuje je
+        przez System.Diagnostics.Process.Start() z parametrem --query-gpu w celu
+        pobrania metryk GPU (VRAM, obciążenie, temperatura, pobór mocy) podczas
+        testu wydajności. Analogia: tak jak Ollama jest zewnętrzną usługą systemową
+        uruchamianą jako proces, tak nvidia-smi jest zewnętrznym narzędziem CLI
+        wywoływanym jednorazowo z poziomu kodu backendu.
+        Jeśli karta nie jest NVIDIA lub sterowniki NVIDIA nie są zainstalowane,
+        pole gpu_metrics_available = false i sekcja GPU jest pomijana w UI.
 
 C. Sposób Instalacji:
    1. Sklonuj lub rozpakuj archiwum z kodem źródłowym do wybranego katalogu (np. `D:\Projekt LLM DOTNET`).
@@ -295,8 +370,8 @@ E. Struktura Wewnętrzna Projektu:
    Projekt LLM DOTNET/
    ├── client/                      # Kod źródłowy aplikacji frontendowej (React)
    │   ├── src/
-   │   │   ├── components/          # Komponenty interfejsu (Dashboard, BenchmarkPanel, itp.)
-   │   │   ├── App.jsx              # Centralne zarządzanie stanem i nawigacją
+   │   │   ├── components/          # Komponenty interfejsu (Dashboard, BenchmarkPanel, LoadingView, OfflineView, Sidebar, itp.)
+   │   │   ├── App.jsx              # Centralne zarządzanie stanem aplikacji
    │   │   └── main.jsx             # Plik wejściowy (inicjalizacja React)
    │   ├── package.json             # Konfiguracja pakietów npm i skryptów uruchomieniowych
    │   └── vite.config.js           # Konfiguracja środowiska budowania Vite
@@ -325,7 +400,7 @@ A. Weryfikacja (Verification) – "Czy tworzymy produkt poprawnie?"
      * Wykorzystanie kompilatora Roslyn (`dotnet build`) do weryfikacji poprawności
        typów, składni języka C# oraz powiązań referencyjnych między klasami.
      * Podział modeli danych na osobne pliki został zweryfikowany pod kątem braku
-       konfliktów przestrzeni nazw (`NeuroBench.Backend.Models`).
+       konfliktów przestrzeni nazw (`ProjektAI.Backend.Models`).
    - Weryfikacja Standardów Kodu (JavaScript / React):
      * Wykorzystanie narzędzia ESLint (`npm run lint`) w celu detekcji błędów
        w czasie rzeczywistym, weryfikacji nieużywanych zmiennych oraz egzekwowania
@@ -371,7 +446,7 @@ B. Walidacja (Validation) – "Czy tworzymy właściwy produkt?"
 8. PODSUMOWANIE I WNIOSKI
 -----------------------------------------------------------------------------
 
-Projekt NeuroBench AI stanowi w pełni funkcjonalne, wydajne i nowoczesne narzędzie do lokalnego benchmarkowania modeli językowych LLM oraz monitorowania zasobów sprzętowych komputera w czasie rzeczywistym.
+Projekt Projekt AI stanowi w pełni funkcjonalne, wydajne i nowoczesne narzędzie do lokalnego benchmarkowania modeli językowych LLM oraz monitorowania zasobów sprzętowych komputera w czasie rzeczywistym.
 
 Główne wnioski z realizacji i działania systemu:
 1. Skuteczność lokalnego uruchamiania AI: Użycie platformy Ollama pozwala na w pełni autonomiczne i darmowe uruchamianie modeli LLM klasy konsumenckiej (takich jak Phi-3, Llama 3.1 8B) bezpośrednio na komputerze użytkownika, bez konieczności przesyłania danych do chmurowych API (zapewniając 100% prywatności).
