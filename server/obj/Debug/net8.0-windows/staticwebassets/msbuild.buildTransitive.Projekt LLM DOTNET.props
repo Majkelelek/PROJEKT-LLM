@@ -1,3 +1,0 @@
-﻿<Project>
-  <Import Project="..\buildMultiTargeting\Projekt LLM DOTNET.props" />
-</Project>
