@@ -238,34 +238,5 @@ app.MapPost("/api/benchmark/run-stream", async (
     }
 });
 
-// 5. POST /api/chat: Wirtualny asystent ds. sprzętu i wydajności (strumieniowanie tekstowe odpowiedzi)
-app.MapPost("/api/chat", async (HttpContext context, ChatRequest request, OllamaClientService ollama) =>
-{
-    bool ollamaActive = await ollama.IsOllamaRunningAsync();
-    if (!ollamaActive)
-    {
-        context.Response.StatusCode = 503;
-        await context.Response.WriteAsJsonAsync(new { detail = "Usługa Ollama nie działa lokalnie." });
-        return;
-    }
-
-    context.Response.ContentType = "text/plain";
-    
-    try
-    {
-        // Pętla pobierająca przychodzące fragmenty tekstu z usługi Ollama i natychmiast wysyłająca je do klienta
-        await foreach (var chunk in ollama.StreamChatResponseAsync(request.Model, request.Specs, request.Results, request.History))
-        {
-            await context.Response.WriteAsync(chunk);
-            await context.Response.Body.FlushAsync();
-        }
-    }
-    catch (Exception ex)
-    {
-        app.Logger.LogError(ex, "Strumieniowanie odpowiedzi czatu zakończone niepowodzeniem");
-        await context.Response.WriteAsync($"\n[Błąd czatu AI: {ex.Message}]");
-    }
-});
-
 // Uruchomienie aplikacji webowej i nasłuchiwanie na żądania HTTP
 app.Run();

@@ -3,6 +3,7 @@ import Dashboard from "./components/Dashboard";
 import BenchmarkPanel from "./components/BenchmarkPanel";
 import AIAnalyst from "./components/AIAnalyst";
 import HistoryPanel from "./components/HistoryPanel";
+import ComparePanel from "./components/ComparePanel";
 import LoadingView from "./components/LoadingView";
 import OfflineView from "./components/OfflineView";
 import Sidebar from "./components/Sidebar";
@@ -45,8 +46,28 @@ export default function App() {
         const localData = localStorage.getItem("projekt_ai_history");
         const reportsData = localData ? JSON.parse(localData) : [];
         if (reportsData.length > 0) {
+          // Ujednolicanie starych/niekompletnych wpisów z historii (brak id lub complexity)
+          let modified = false;
+          const sanitized = reportsData.map((run, idx) => {
+            const runId = run.id || run.Id;
+            const hasComplexity = run.complexity;
+            if (!runId || !hasComplexity) {
+              modified = true;
+              return {
+                ...run,
+                id: runId || `run-legacy-${idx}-${new Date(run.timestamp || Date.now()).getTime()}`,
+                complexity: run.complexity || "medium"
+              };
+            }
+            return run;
+          });
+
+          if (modified) {
+            localStorage.setItem("projekt_ai_history", JSON.stringify(sanitized));
+          }
+
           // Sortowanie według daty i ustawienie najnowszego testu jako aktywnego
-          const sorted = reportsData.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+          const sorted = sanitized.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
           setActiveRun(sorted[0]);
         }
       } catch (e) {
@@ -108,7 +129,7 @@ export default function App() {
   // Obsługa wybrania historycznego rekordu z tabeli wyników
   const handleSelectHistoryRun = (run) => {
     setActiveRun(run);
-    setActiveTab("dashboard"); // Ładujemy specyfikację danego testu i wracamy do panelu głównego
+    setActiveTab("analysis"); // Ładujemy raport AI oraz szczegółowe metryki wczytanego testu
   };
 
   // Ekran błędu - serwer backend offline
@@ -140,12 +161,14 @@ export default function App() {
               {activeTab === "dashboard" && "Panel Systemu"}
               {activeTab === "benchmark" && "Zestaw Testów Wydajności"}
               {activeTab === "analysis" && "Ekspercka Ocena AI"}
+              {activeTab === "compare" && "Porównanie Wyników"}
               {activeTab === "history" && "Logi Wyników Wydajności"}
             </h1>
             <span className="header-subtitle">
               {activeTab === "dashboard" && "Śledzenie specyfikacji w czasie rzeczywistym i telemetria zasobów."}
               {activeTab === "benchmark" && "Uruchom test wydajności lokalnych modeli językowych (LLM)."}
               {activeTab === "analysis" && "Raport o wąskich gardłach wydajności i rekomendacje uaktualnień przygotowane przez LLM Ollama."}
+              {activeTab === "compare" && "Zestaw ze sobą dwa testy, aby bezpośrednio porównać ich wydajność i parametry."}
               {activeTab === "history" && "Przeglądaj historię wyników, eksportuj i usuwaj wpisy."}
             </span>
           </div>
@@ -154,7 +177,7 @@ export default function App() {
         {/* Renderowanie poszczególnych widoków w zależności od wybranej zakładki */}
         {activeTab === "dashboard" && (
           <Dashboard 
-            specs={activeRun?.specs || specs} 
+            specs={specs} 
             liveMetrics={liveMetrics} 
             onRunBenchmarkTab={() => setActiveTab("benchmark")} 
           />
@@ -172,6 +195,10 @@ export default function App() {
           <AIAnalyst 
             currentRun={activeRun} 
           />
+        )}
+
+        {activeTab === "compare" && (
+          <ComparePanel />
         )}
 
         {activeTab === "history" && (

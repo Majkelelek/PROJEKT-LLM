@@ -13,7 +13,7 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
         if (res.ok) {
           const data = await res.json();
           setLocalLive(data);
-          
+
           // Aktualizacja historii wykresu (limit do ostatnich 20 odczytów dla optymalizacji wydajności)
           setHistory(prev => {
             const next = [...prev, { time: Date.now(), cpu: data.cpu_percent, ram: data.ram_percent }];
@@ -65,7 +65,9 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
 
   return (
     <div className="animate-fade-in" style={{ display: "flex", flexDirection: "column", gap: "30px" }}>
-      
+
+
+
       {/* Siatka z kartami specyfikacji technicznej sprzętu */}
       <div className="specs-grid">
         {/* Karta Procesora (CPU) */}
@@ -74,7 +76,7 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
           <div className="spec-label">Procesor (CPU)</div>
           <div className="spec-value">{specs?.cpu_model || "Ładowanie szczegółów procesora..."}</div>
           <div className="spec-sub">
-            {specs?.cpu_cores_physical} Rdzeni / {specs?.cpu_cores_logical} Wątków 
+            {specs?.cpu_cores_physical} Rdzeni / {specs?.cpu_cores_logical} Wątków
             {specs?.cpu_max_frequency_mhz ? ` @ ${roundFreq(specs.cpu_max_frequency_mhz)} GHz maks.` : ""}
           </div>
         </div>
@@ -108,7 +110,7 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
 
       {/* Sekcja monitorowania obciążenia na żywo */}
       <div className="live-section">
-        
+
         {/* Karta monitorowania obciążenia CPU */}
         <div className="live-card glass-panel">
           <div className="live-card-header">
@@ -151,10 +153,10 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
                 {localLive.cpu_percent_per_core.map((p, idx) => (
                   <div key={idx} className="core-box">
                     <span className="core-number">C{idx}</span>
-                    <span 
-                      className="core-val" 
-                      style={{ 
-                        color: p > 80 ? "var(--accent-red)" : p > 40 ? "var(--accent-amber)" : "var(--accent-green)" 
+                    <span
+                      className="core-val"
+                      style={{
+                        color: p > 80 ? "var(--accent-red)" : p > 40 ? "var(--accent-amber)" : "var(--accent-green)"
                       }}
                     >
                       {Math.round(p)}%
@@ -208,7 +210,7 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
                 {/* Przerywane linie pomocnicze siatki */}
                 <line x1="0" y1={chartHeight / 2} x2={chartWidth} y2={chartHeight / 2} stroke="rgba(255,255,255,0.05)" strokeDasharray="4,4" />
                 <line x1="0" y1={chartHeight - padding} x2={chartWidth} y2={chartHeight - padding} stroke="rgba(255,255,255,0.1)" />
-                
+
                 {/* Linia zużycia procesora (Cyan) */}
                 {cpuPoints && (
                   <polyline

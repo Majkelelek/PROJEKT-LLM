@@ -361,6 +361,90 @@ namespace ProjektAI.Backend.Services
             return 0.0;
         }
 
+        // Odczytuje dokładną pojemność VRAM z rejestru systemowego Windows (QWORD 64-bit), omijając limit 4GB w WMI.
+        private double GetVramFromRegistry(string gpuName)
+        {
+            try
+            {
+                string keyPath = @"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}";
+                using (var rootKey = Registry.LocalMachine.OpenSubKey(keyPath))
+                {
+                    if (rootKey != null)
+                    {
+                        foreach (string subKeyName in rootKey.GetSubKeyNames())
+                        {
+                            if (subKeyName.Length == 4) // Np. 0000, 0001
+                            {
+                                using (var subKey = rootKey.OpenSubKey(subKeyName))
+                                {
+                                    if (subKey != null)
+                                    {
+                                        var desc = subKey.GetValue("DriverDesc")?.ToString();
+                                        if (desc != null && (desc.Contains(gpuName, StringComparison.OrdinalIgnoreCase) || gpuName.Contains(desc, StringComparison.OrdinalIgnoreCase)))
+                                        {
+                                            // Próba odczytu wartości 64-bitowej
+                                            var qwMem = subKey.GetValue("HardwareInformation.qwMemorySize");
+                                            if (qwMem != null)
+                                            {
+                                                double bytes = Convert.ToDouble(qwMem);
+                                                return Math.Round(bytes / (1024.0 * 1024.0 * 1024.0), 2);
+                                            }
+
+                                            // Fallback do wartości 32-bitowej
+                                            var mem = subKey.GetValue("HardwareInformation.MemorySize");
+                                            if (mem != null)
+                                            {
+                                                double bytes = Convert.ToDouble(mem);
+                                                return Math.Round(bytes / (1024.0 * 1024.0 * 1024.0), 2);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Nie udało się odczytać VRAM z rejestru dla GPU: {GpuName}", gpuName);
+            }
+            return 0.0;
+        }
+
+        // Pobiera pojemność pamięci VRAM dedykowanej karty graficznej NVIDIA przy pomocy narzędzia nvidia-smi.
+        private double GetNvidiaVramFromSmi()
+        {
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo("nvidia-smi",
+                    "--query-gpu=memory.total --format=csv,noheader,nounits")
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var process = System.Diagnostics.Process.Start(psi);
+                if (process != null)
+                {
+                    var output = process.StandardOutput.ReadToEnd();
+                    process.WaitForExit();
+                    var parts = output.Trim().Split('\n');
+                    if (parts.Length > 0 && double.TryParse(parts[0].Trim(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double mib))
+                    {
+                        return Math.Round(mib / 1024.0, 2); // Konwersja z MiB do GB
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("nvidia-smi nie powiodło się przy odpytywaniu o VRAM: {Message}", ex.Message);
+            }
+            return 0.0;
+        }
+
         // Zwraca listę nazw kart graficznych oraz szczegółowe informacje (nazwa i ilość VRAM)
         private (List<string> Names, List<GpuDetail> Details) GetGpuInformation()
         {
@@ -377,28 +461,39 @@ namespace ProjektAI.Backend.Services
                         var name = item["Name"]?.ToString() ?? "Nieznana karta graficzna";
                         double vramGb = 0.0;
 
+                        // 1. Spróbujmy odczytać WMI
                         var adapterRam = item["AdapterRAM"];
                         if (adapterRam != null)
                         {
                             try
                             {
                                 long bytesSigned = Convert.ToInt64(adapterRam);
-                                ulong bytes;
-                                if (bytesSigned < 0)
-                                {
-                                    // Obsługa przepełnienia dla zapytań 32-bitowych na systemach o dużej pamięci VRAM (dodajemy 4GB)
-                                    bytes = (ulong)(bytesSigned + 4294967296L);
-                                }
-                                else
-                                {
-                                    bytes = (ulong)bytesSigned;
-                                }
-
+                                ulong bytes = bytesSigned < 0 ? (ulong)(bytesSigned + 4294967296L) : (ulong)bytesSigned;
                                 vramGb = Math.Round((double)bytes / (1024.0 * 1024.0 * 1024.0), 2);
                             }
                             catch (Exception ramEx)
                             {
                                 _logger.LogWarning(ramEx, "Nie udało się sparsować wartości AdapterRAM dla karty graficznej");
+                            }
+                        }
+
+                        // 2. Jeśli to karta NVIDIA, spróbuj pobrać dokładny VRAM z nvidia-smi
+                        if (name.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase))
+                        {
+                            double smiVram = GetNvidiaVramFromSmi();
+                            if (smiVram > 0)
+                            {
+                                vramGb = smiVram;
+                            }
+                        }
+
+                        // 3. Fallback do rejestru systemowego Windows (często wymagany, gdyż WMI dla GTX 1650/1060 w systemach hybrydowych zgłasza 0)
+                        if (vramGb <= 0.1)
+                        {
+                            double regVram = GetVramFromRegistry(name);
+                            if (regVram > 0)
+                            {
+                                vramGb = regVram;
                             }
                         }
 

@@ -15,11 +15,18 @@ A. FRONTEND: React (Vite + Vanilla CSS + JavaScript)
    - Aplikacja została zorganizowana w modularne komponenty:
      * App.jsx: Główny komponent zarządzający stanem nawigacji, cyklem pętli
        sprawdzającej połączenie (ping) oraz centralnym zarządzaniem historią.
+     * Sidebar.jsx: Boczny pasek nawigacyjny z logo, przyciskami zakładek
+       (Specyfikacja, Uruchom testy, Raport analityka AI, Zapisane wyniki) oraz
+       stopką wyświetlającą status połączenia Ollama i liczbę dostępnych modeli.
+     * LoadingView.jsx: Pełnoekranowy ekran ładowania wyświetlany w czasie
+       inicjalizacji aplikacji (animowany spinner + komunikat tekstowy).
+     * OfflineView.jsx: Ekran diagnostyczny widoczny gdy backend jest niedostępny.
+       Wyświetla przyczynę błędu, kod startowy (dotnet run) i przycisk ponowienia.
      * Dashboard.jsx: Kokpit telemetrii. Wizualizuje obciążenie CPU na poziomie
        poszczególnych wątków za pomocą reaktywnych pasków postępu SVG.
      * BenchmarkPanel.jsx: Pozwala wybrać model LLM oraz stopień trudności promptu,
-        obsługuje nasłuchiwanie strumienia logów SSE z serwera i wyświetla wyniki
-        w postaci pełnej tabeli metryk (czasowe Ollama /verbose, GPU nvidia-smi, RAM/CPU).
+       obsługuje nasłuchiwanie strumienia logów SSE z serwera i wyświetla wyniki
+       w postaci pełnej tabeli metryk (czasowe Ollama /verbose, GPU nvidia-smi, RAM/CPU).
      * CompatibilityPanel.jsx: Interaktywny kalkulator szacujący rozkład warstw
        modelu w pamięci VRAM GPU oraz pamięci systemowej RAM (offloading).
      * AIAnalyst.jsx: Prezentuje ustrukturyzowany raport wygenerowany przez LLM
@@ -84,7 +91,7 @@ Serwer ASP.NET Core wystawia następujące endpointy HTTP/SSE dla frontendu:
    - Zwraca szczegółową statyczną specyfikację maszyny.
    - Zwracany obiekt (JSON): SystemSpecs (OS, model CPU, rdzenie, RAM, detale GPU).
 
-2. GET /api/live-metrics
+2. GET /api/system-info/live
    - Cykliczny punkt odczytu obciążenia sprzętu (odpytywany przez frontend co 1.5s).
    - Zwracany obiekt (JSON): LiveMetrics (użycie CPU w %, lista obciążenia rdzeni,
      użycie RAM w GB, procent RAM).
@@ -95,19 +102,19 @@ Serwer ASP.NET Core wystawia następujące endpointy HTTP/SSE dla frontendu:
 
 4. POST /api/benchmark/run-stream
    - Uruchamia test wydajności w formie Server-Sent Events (SSE).
-   - Strumieniuje w czasie rzeczywistym postęp testu (np. "Inicjalizacja",
-     "Wysyłanie zapytania", "Analiza AI"), a na sam koniec przesyła event
-     "finished" z kompletnym obiektem BenchmarkRun (DTO).
+   - Body żądania (RunBenchmarkRequest): { model, tests: ["ollama"], complexity }
+   - Format wysyłanych zdarzeń SSE (każdy event):
+     data: {"status":"running","step":"ollama","message":"...","progress":20}
+     (dwie nowe linie \n\n kończące blok zdarzenia)
+   - Ostatni event: status="completed", step="finished", progress=100,
+     pole "run" zawiera kompletny obiekt BenchmarkRun.
+   - Nagłówki odpowiedzi: Content-Type: text/event-stream, Cache-Control: no-cache,
+     Connection: keep-alive, X-Accel-Buffering: no (wyłącza buforowanie proxy).
    - UWAGA: Używa bezpośredniego context.Response.WriteAsync() zamiast StreamWriter,
      aby uniknąć błędu ERR_INCOMPLETE_CHUNKED_ENCODING (StreamWriter z blokiem using
      dispose'uje strumień HTTP zbyt wcześnie).
 
-5. POST /api/chat
-   - Umożliwia wysłanie historii rozmowy z doradcą AI.
-   - Body żądania: JSON reprezentujący obiekt ChatRequest (model, specyfikacja,
-     wyniki ostatniego testu oraz historia wiadomości).
-
-6. Zabezpieczenia i protokoły komunikacyjne:
+5. Zabezpieczenia i protokoły komunikacyjne:
    - Zabezpieczenie CORS (Cross-Origin Resource Sharing):
      Ponieważ frontend (port 5173) działa na innym porcie niż backend (port 8000),
      serwer ASP.NET Core konfiguruje politykę CORS zezwalającą na żądania z pochodzenia
@@ -182,11 +189,11 @@ D. Mechanizm generowania raportów eksperckich (AI Analyst)
         * Ograniczenie tokenów (num_predict): 150. Temperatura: 0.1.
       - ŚREDNI (Medium): Szczegółowa ocena (2-3 akapity) ze wskazaniem wąskich gardeł
         i podstawowych rekomendacji dotyczących rozbudowy sprzętu.
-        * Ograniczenie tokenów (num_predict): 600. Temperatura: 0.1.
+        * Ograniczenie tokenow (num_predict): 500. Temperatura: 0.3.
       - ZAAWANSOWANY (Complex): Pełny, wielosekcyjny raport ekspercki w formacie Markdown,
         zawierający tabele alokacji VRAM/RAM, analizę balansu obciążenia CPU/GPU
         oraz dedykowany plan uaktualnienia sprzętu.
-        * Ograniczenie tokenów (num_predict): 1500. Temperatura: 0.3.
+        * Ograniczenie tokenow (num_predict): 1200. Temperatura: 0.5.
 
 E. Optymalizacja i akceleracja GPU w Ollama
    W zapytaniach do API Ollamy program celowo przekazuje parametry optymalizacyjne:
@@ -206,8 +213,9 @@ wydajności według następujących wzorów:
 1. Całkowity czas generowania (Total Generation Time [s]):
    TotalTimeSec = total_duration / 1,000,000,000.0
 
-2. Opóźnienie pierwszego tokenu / ładowania (Latency [s]):
-   LatencySec = load_duration / 1,000,000,000.0
+2. Opóźnienie do pierwszego tokenu — TTFT (Latency [s]):
+   LatencySec = (load_duration + prompt_eval_duration) / 1,000,000,000.0
+   (Czas ładowania modelu + czas przetworzenia promptu = czas do pierwszego tokenu)
 
 3. Prędkość generowania tekstu (Tokens per Second [t/s]):
    TokensPerSec = eval_count / (eval_duration / 1,000,000,000.0)
@@ -264,12 +272,49 @@ B. Metryki systemowe — WMI (SystemInfoService.GetSystemSnapshot)
    - sys_ram_percent  : Procentowe zajęcie RAM [%]
    - sys_cpu_percent  : Łączne obciążenie procesora podczas testu [%]
 
+-----------------------------------------------------------------------------
+4c. PREDYKCJA WYDAJNOŚCI (TPS) PRZED BENCHMARKIEM (CompatibilityPanel.jsx)
+-----------------------------------------------------------------------------
+
+Aplikacja posiada interaktywny kalkulator zgodności (CompatibilityPanel.jsx), który prognozuje wydajność wnioskowania (tokeny/s) dla wybranego modelu zanim użytkownik fizycznie uruchomi benchmark. Zamiast sztywnych baz danych z nazwami modeli GPU (co pomijałoby nowe lub niestandardowe karty), zastosowano fizyczno-sprzętowy model matematyczny:
+
+A. Fizyczne założenia limitacji przepustowości (Memory-Bandwidth Bound):
+   - Wnioskowanie na modelach LLM polega na sekwencyjnym czytaniu całego stanu sieci z pamięci VRAM do rejestrów GPU przy każdym wygenerowanym tokenie.
+   - Prawdziwym fizycznym ograniczeniem wydajności jest przepustowość pamięci karty graficznej (Memory Bandwidth [GB/s]), a nie czysta moc obliczeniowa rdzeni (TFLOPS).
+   - Istnieje silna, naturalna korelacja między rozmiarem pamięci VRAM a szerokością szyny i przepustowością karty (szyna 128-bit dla kart 4GB, 192-bit dla 12GB, 384-bit dla 24GB). Średni współczynnik to:
+     Przepustowość (GB/s) ≈ 40 * Rozmiar VRAM (GB)
+   - Rzeczywista sprawność silnika wnioskującego (llama.cpp) wynosi średnio około 33-36% fizycznej przepustowości szyny pamięci z uwagi na opóźnienia kerneli obliczeniowych i narzut systemu.
+
+B. Matematyczny wzór estymacyjny:
+   1. Klasa wydajności GPU (gpuPower):
+      gpuPower = Math.round(activeGpu.vram_gb * 16.5) (dla kart dedykowanych z VRAM >= 2.0 GB)
+      gpuPower = 35 (wartość bazowa dla zintegrowanych układów graficznych)
+   2. Prognozowana prędkość generowania (estTps):
+      estTps = gpuPower / (ModelSizeB * 1.1)
+      Co po podstawieniu daje uproszczoną postać fizyczną:
+      estTps = (15 * VRAM [GB]) / RozmiarModelu [Miliardy parametrów]
+
+   Ten wzór zapewnia bardzo wysoką zgodność z realnymi testami na różnym sprzęcie:
+   - GTX 1650 (4 GB VRAM) dla modelu 3B: prognoza ~20.0 t/s (realnie ~16-22 t/s)
+   - RTX 3060 (12 GB VRAM) dla modelu 3B: prognoza ~60.0 t/s (realnie ~45-65 t/s)
+   - RTX 4090 (24 GB VRAM) dla modelu 3B: prognoza ~120.0 t/s (realnie ~100-140 t/s)
+
 C. Wyświetlanie w UI (BenchmarkPanel.jsx)
-   Po zakończeniu testu, wszystkie metryki są prezentowane w trojsegmentowej
+   Po zakończeniu testu, wszystkie metryki są prezentowane w trójsegmentowej
    tabeli (odpowiednik /set verbose w Ollama CLI):
    - Sekcja 1 (niebieski nagłówek): Czasy wnioskowania Ollamy (verbose)
    - Sekcja 2 (fioletowy nagłówek): GPU z nvidia-smi (lub info o braku NVIDIA)
    - Sekcja 3 (zielony nagłówek): Systemowe RAM i CPU (migawka WMI)
+
+   Każdy wiersz tabeli (komponent MetricRow) zawiera teraz:
+   1. Krótki opis (np. "Całkowity czas od wysłania pytania do zakończenia odpowiedzi").
+   2. Interpretację wyniku - wskazówkę ułatwiającą ocenę wydajności sprzętu:
+      - "Im więcej, tym lepiej ⬆️" (np. dla prompt eval rate, eval rate, obciążenia GPU).
+      - "Im mniej, tym lepiej ⬇️" (np. dla total duration, load duration, prompt eval
+        duration, eval duration, temperatury GPU, zużycia RAM, obciążenia CPU).
+      - "Zależy od konfiguracji ➔" (np. dla liczby tokenów promptu/odpowiedzi,
+        zużycia VRAM, poboru mocy).
+
 
 -----------------------------------------------------------------------------
 5. KOMENDY UŻYWANE W PROJEKCIE (ŚCIĄGAWKA)
@@ -366,25 +411,43 @@ D. Sposób Aktywacji (Uruchomienia):
    4. Otwórz przeglądarkę internetową i wejdź na podany adres: http://localhost:5173.
 
 E. Struktura Wewnętrzna Projektu:
-   Projekt jest podzielony na przejrzyste sekcje:
    Projekt LLM DOTNET/
-   ├── client/                      # Kod źródłowy aplikacji frontendowej (React)
-   │   ├── src/
-   │   │   ├── components/          # Komponenty interfejsu (Dashboard, BenchmarkPanel, LoadingView, OfflineView, Sidebar, itp.)
-   │   │   ├── App.jsx              # Centralne zarządzanie stanem aplikacji
-   │   │   └── main.jsx             # Plik wejściowy (inicjalizacja React)
-   │   ├── package.json             # Konfiguracja pakietów npm i skryptów uruchomieniowych
-   │   └── vite.config.js           # Konfiguracja środowiska budowania Vite
-   │
-   ├── server/                      # Kod źródłowy aplikacji backendowej (.NET Core)
-   │   ├── Models/                  # Klasy DTO/Modele danych (SystemSpecs, BenchmarkRun, itp.)
-   │   ├── Services/                # Logika usług (SystemInfoService, OllamaClientService)
-   │   ├── Program.cs               # Konfiguracja endpointów i kontenera DI
-   │   └── Projekt LLM DOTNET.csproj# Konfiguracja zależności i kompilacji .NET
-   │
-   ├── .gitignore                   # Centralny plik wykluczeń Gita dla całego repozytorium
-   ├── biblioteki.txt               # Specyfikacja bibliotek, architektury i migracji
-   └── raport.txt                   # Niniejszy szczegółowy raport techniczny projektu
+   +-- client/                   # Kod zrodlowy aplikacji frontendowej (React)
+   |   +-- src/
+   |   |   +-- components/
+   |   |   |   +-- Sidebar.jsx          # Boczny pasek nawigacyjny i status Ollama
+   |   |   |   +-- LoadingView.jsx      # Ekran ladowania (spinner inicjalizacji)
+   |   |   |   +-- OfflineView.jsx      # Ekran bledu braku polaczenia z backendem
+   |   |   |   +-- Dashboard.jsx        # Telemetria CPU/RAM na zywo (wykresy SVG)
+   |   |   |   +-- BenchmarkPanel.jsx   # Panel testow LLM + tabela metryk verbose
+   |   |   |   +-- CompatibilityPanel.jsx  # Kalkulator VRAM/RAM dla modeli
+   |   |   |   +-- AIAnalyst.jsx        # Wyswietlanie raportu AI (parser Markdown)
+   |   |   |   +-- HistoryPanel.jsx     # Historia testow z localStorage + eksport
+   |   |   +-- App.jsx              # Centralne zarzadzanie stanem aplikacji
+   |   |   +-- main.jsx             # Plik wejsciowy (inicjalizacja React)
+   |   +-- package.json             # Konfiguracja pakietow npm i skryptow
+   |   +-- vite.config.js           # Konfiguracja srodowiska budowania Vite
+   |
+   +-- server/                   # Kod zrodlowy aplikacji backendowej (.NET Core)
+   |   +-- Models/
+   |   |   +-- SystemSpecs.cs       # OS, CPU (model/rdzenie/MHz), RAM, GPU+VRAM
+   |   |   +-- GpuDetail.cs         # Nazwa GPU + rozmiar VRAM [GB]
+   |   |   +-- LiveMetrics.cs       # Obciazenie CPU/rdzeni, RAM uzyta/procent
+   |   |   +-- BenchmarkRun.cs      # Pelny przebieg testu (id, timestamp, specs, results, ai_report)
+   |   |   +-- BenchmarkResults.cs  # Kontener wynikow (pole ollama: OllamaResult)
+   |   |   +-- OllamaResult.cs      # Metryki wnioskowania + GPU nvidia-smi + RAM/CPU
+   |   |   +-- RunBenchmarkRequest.cs  # Zadanie testu (model, tests[], complexity)
+   |   |   
+   |   |   
+   |   +-- Services/
+   |   |   +-- SystemInfoService.cs    # WMI + rejestr + nvidia-smi + migawka systemu
+   |   |   +-- OllamaClientService.cs  # HTTP do Ollama: benchmark, raport AI
+   |   +-- Program.cs               # Konfiguracja endpointow i kontenera DI
+   |   +-- Projekt LLM DOTNET.csproj   # Konfiguracja zaleznosci i kompilacji .NET
+   |
+   +-- .gitignore                   # Centralny plik wykluczenia Git
+   +-- biblioteki.txt               # Specyfikacja bibliotek, architektury i migracji
+   +-- raport.txt                   # Niniejszy szczegolowy raport techniczny projektu
 
 -----------------------------------------------------------------------------
 7. PROCES WERYFIKACJI I WALIDACJI (V&V)

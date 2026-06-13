@@ -23,11 +23,11 @@ const QUANTIZATIONS = [
 // Pomocnicza funkcja parsująca nazwę modelu z usługi Ollama na parametry rozmiaru i liczby warstw sieci neuronowej
 function parseOllamaModel(modelName) {
   const name = modelName.toLowerCase();
-  
-  let sizeB = 8.0; 
+
+  let sizeB = 8.0;
   let layers = 32;
   let displayName = modelName;
-  
+
   if (name.includes("1.5b") || name.includes("1b")) {
     sizeB = 1.5;
     layers = 16;
@@ -57,7 +57,7 @@ function parseOllamaModel(modelName) {
     layers = 60;
     displayName = `DeepSeek R1 (671B)`;
   }
-  
+
   return { sizeB, layers, displayName };
 }
 
@@ -86,26 +86,13 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, hideS
 
   // 1. Ustalanie parametrów kart graficznych (VRAM)
   let gpus = specs?.gpu_details || [];
-  // W przypadku braku dokładnych informacji o pamięci VRAM z WMI, dopasowujemy szacunkowo na podstawie nazwy karty
-  if ((!gpus || gpus.length === 0 || (gpus.length === 1 && gpus[0].name === "Unknown GPU")) && specs?.gpus && specs.gpus.length > 0) {
-    gpus = specs.gpus.map(gpuName => {
-      let vram = 0.5; // Domyślna minimalna wartość
-      const upper = gpuName.toUpperCase();
-      if (upper.includes("1650")) vram = 4.0;
-      else if (upper.includes("1660") || upper.includes("1060")) vram = 6.0;
-      else if (upper.includes("3060") || upper.includes("4060")) vram = 12.0;
-      else if (upper.includes("4070") || upper.includes("3070")) vram = 8.0;
-      else if (upper.includes("4080") || upper.includes("3080")) vram = 16.0;
-      else if (upper.includes("4090") || upper.includes("3090")) vram = 24.0;
-      else if (upper.includes("1080")) vram = 8.0;
-      else if (upper.includes("1070")) vram = 8.0;
-      else if (upper.includes("1050")) vram = 2.0;
-      else if (upper.includes("RTX")) vram = 8.0;
-      else if (upper.includes("GTX")) vram = 4.0;
-      return { name: gpuName, vram_gb: vram };
-    });
+  if ((!gpus || gpus.length === 0) && specs?.gpus && specs.gpus.length > 0) {
+    gpus = specs.gpus.map(gpuName => ({
+      name: gpuName,
+      vram_gb: 0.0 // jeśli brak szczegółów w historii, oznaczamy jako brak danych (0.0)
+    }));
   }
-  
+
   // Wybieramy kartę z największą ilością pamięci VRAM jako kartę główną pod obliczenia LLM
   const activeGpu = gpus.reduce((best, curr) => {
     return curr.vram_gb > best.vram_gb ? curr : best;
@@ -117,27 +104,27 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, hideS
   // 2. Obliczenia podziału warstw modelu i zapotrzebowania na pamięć
   // Obliczenie szacowanego zapotrzebowania na pamięć RAM/VRAM dla modelu z wybraną kwantyzacją
   const requiredMemory = Math.round((model.sizeB * quant.multiplier + quant.overhead) * 10) / 10;
-  
+
   // Rezerwujemy 0.7 GB pamięci VRAM na obsługę systemu operacyjnego i pulpitu
-  const vramAvailable = Math.max(0, activeGpu.vram_gb - 0.7); 
+  const vramAvailable = Math.max(0, activeGpu.vram_gb - 0.7);
   const numLayers = model.layers;
   const memoryPerLayer = requiredMemory / numLayers;
-  
+
   // Liczymy ile warstw modelu zmieści się bezpośrednio w szybkiej pamięci VRAM
   let layersInVram = 0;
   if (vramAvailable > 0) {
     layersInVram = Math.floor(vramAvailable / memoryPerLayer);
     if (layersInVram > numLayers) layersInVram = numLayers;
   }
-  
+
   // Pozostałe warstwy będą zrzucone do pamięci RAM
   const layersInRam = numLayers - layersInVram;
   const ramRequired = layersInRam * memoryPerLayer;
-  
+
   // Rezerwujemy 4.5 GB pamięci systemowej RAM na system Windows i inne procesy użytkownika
   const ramAvailableForModel = Math.max(0, totalRam - 4.5);
   const fitsInRam = ramRequired <= ramAvailableForModel;
-  
+
   // Jeśli pozostałe warstwy nie mieszczą się w RAMie, następuje zrzucenie do pliku wymiany (swap na dysku)
   let layersInSwap = 0;
   if (!fitsInRam && ramAvailableForModel > 0) {
@@ -148,7 +135,7 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, hideS
     layersInSwap = numLayers - layersInVram;
   }
   if (layersInSwap < 0) layersInSwap = 0;
-  
+
   const layersInRamActual = numLayers - layersInVram - layersInSwap;
 
   // Obliczanie procentowego wskaźnika zgodności sprzętowej (Compatibility Score)
@@ -168,15 +155,12 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, hideS
   }
 
   // 3. Prognozowanie szybkości generowania tekstu (Tokeny na sekundę)
-  // Określenie mocy karty graficznej (klasy wydajnościowej GPU) na podstawie jej nazwy
-  let gpuPower = 35; // Wartość bazowa dla układów zintegrowanych
-  const gpuNameUpper = activeGpu.name.toUpperCase();
-  if (gpuNameUpper.includes("RTX 4090") || gpuNameUpper.includes("RTX 3090")) gpuPower = 400;
-  else if (gpuNameUpper.includes("RTX 4080") || gpuNameUpper.includes("RTX 3080") || gpuNameUpper.includes("RX 7900")) gpuPower = 280;
-  else if (gpuNameUpper.includes("RTX 4070") || gpuNameUpper.includes("RTX 3070") || gpuNameUpper.includes("RTX 4060 Ti") || gpuNameUpper.includes("RX 7800")) gpuPower = 180;
-  else if (gpuNameUpper.includes("RTX 4060") || gpuNameUpper.includes("RTX 3060") || gpuNameUpper.includes("RTX 2080") || gpuNameUpper.includes("RTX 3050") || gpuNameUpper.includes("RX 6600")) gpuPower = 110;
-  else if (gpuNameUpper.includes("GTX 1660") || gpuNameUpper.includes("GTX 1080") || gpuNameUpper.includes("GTX 1070")) gpuPower = 70;
-  else if (gpuNameUpper.includes("GTX 1650") || gpuNameUpper.includes("GTX 1060") || gpuNameUpper.includes("GTX 1050")) gpuPower = 45;
+  // Klasa wydajności GPU obliczana na podstawie faktycznego VRAM odczytanego z systemu (bez zgadywania nazw)
+  let gpuPower = 35; // Wartość bazowa dla układów zintegrowanych i biurowych
+  if (activeGpu.vram_gb >= 2.0) {
+    // Wydajność skaluje się z klasą karty powiązaną z pojemnością pamięci VRAM (np. 4GB = 66, 8GB = 132, 12GB = 198, 24GB = 396)
+    gpuPower = Math.round(activeGpu.vram_gb * 16.5);
+  }
 
   const gpuTps = gpuPower / (model.sizeB * 1.1);
   const cpuTps = (cpuCores * 1.5) / (model.sizeB * 0.9 + 0.5);
@@ -197,7 +181,7 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, hideS
     const swapRatio = layersInSwap / numLayers;
     estTps = estTps * (1 - swapRatio * 0.95);
   }
-  
+
   estTps = Math.round(Math.max(0.2, estTps) * 10) / 10;
   const displayTps = actualTps !== null ? actualTps : estTps;
 
@@ -236,14 +220,14 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, hideS
 
   return (
     <div className="animate-fade-in" style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-      
+
       {/* Selektory wyboru modelu i kwantyzacji (ukrywane, gdy wywołujemy w podglądzie wyników) */}
       {!hideSelectors ? (
         <div className="glass-panel" style={{ padding: "24px", display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: "24px" }}>
           {/* Lewy panel selektorów */}
           <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
             <h3 style={{ fontSize: "18px", fontWeight: "700" }}>Wybierz model i kwantyzację</h3>
-            
+
             <div className="control-group">
               <label className="control-label" htmlFor="compat-model-select">Model językowy (LLM)</label>
               <select
@@ -289,7 +273,7 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, hideS
               <div style={{ fontSize: "11px", textTransform: "uppercase", letterSpacing: "1px", color: "var(--accent-cyan)", fontWeight: "bold", marginBottom: "12px" }}>
                 Wykryty sprzęt do obliczeń
               </div>
-              
+
               <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px" }}>
                   <span style={{ color: "var(--text-secondary)" }}>Karta GPU (VRAM):</span>
@@ -308,7 +292,7 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, hideS
                 </div>
               </div>
             </div>
-            
+
             <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "16px", fontStyle: "italic" }}>
               * Dane pobrane automatycznie z telemetrii systemowej Projekt AI.
             </div>
@@ -343,11 +327,11 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, hideS
 
       {/* Wykresy i główne wizualizacje alokacji */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: "24px" }}>
-        
+
         {/* Okrągły wskaźnik wyniku dopasowania i werdyktu */}
         <div className="glass-panel" style={{ padding: "24px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "space-between", gap: "20px" }}>
           <h3 style={{ fontSize: "16px", fontWeight: "700", width: "100%", textAlign: "left" }}>Wynik dopasowania sprzętu</h3>
-          
+
           <div style={{ position: "relative", width: "160px", height: "160px", display: "flex", justifyContent: "center", alignItems: "center" }}>
             <svg style={{ width: "150px", height: "150px", transform: "rotate(-90deg)" }}>
               <circle
@@ -382,14 +366,14 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, hideS
           </div>
 
           <div style={{ textAlign: "center", width: "100%" }}>
-            <div 
-              style={{ 
-                display: "inline-block", 
-                padding: "6px 14px", 
-                borderRadius: "20px", 
-                fontSize: "14px", 
-                fontWeight: "700", 
-                color: statusColor, 
+            <div
+              style={{
+                display: "inline-block",
+                padding: "6px 14px",
+                borderRadius: "20px",
+                fontSize: "14px",
+                fontWeight: "700",
+                color: statusColor,
                 backgroundColor: statusBg,
                 marginBottom: "12px",
                 border: `1px solid rgba(${statusColor === "var(--accent-green)" ? "0,230,118" : statusColor === "var(--accent-cyan)" ? "0,229,255" : statusColor === "var(--accent-amber)" ? "255,234,0" : "255,23,68"}, 0.2)`
@@ -414,10 +398,10 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, hideS
 
           {/* Siatka komórek (jedna komórka = jedna warstwa sieci neuronowej) */}
           <div style={{ background: "rgba(0,0,0,0.25)", borderRadius: "8px", border: "1px solid var(--border-color)", padding: "16px" }}>
-            <div 
-              style={{ 
-                display: "grid", 
-                gridTemplateColumns: "repeat(auto-fill, minmax(20px, 1fr))", 
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(20px, 1fr))",
                 gap: "6px",
                 maxHeight: "150px",
                 overflowY: "auto",
@@ -440,14 +424,14 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, hideS
                 }
 
                 return (
-                  <div 
-                    key={idx} 
+                  <div
+                    key={idx}
                     className="compat-layer-cell"
                     title={`Warstwa ${idx + 1}/${numLayers}: ${titleStr}`}
-                    style={{ 
-                      aspectRatio: "1", 
-                      borderRadius: "4px", 
-                      backgroundColor: cellColor, 
+                    style={{
+                      aspectRatio: "1",
+                      borderRadius: "4px",
+                      backgroundColor: cellColor,
                       border: `1px solid ${cellBorder}`,
                       color: cellBorder.replace("0.4", "1.0").replace("0.6", "1.0")
                     }}
@@ -476,7 +460,7 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, hideS
           </div>
 
           <div style={{ fontSize: "12px", color: "var(--text-secondary)", lineHeight: "1.4" }}>
-            Szacowany rozmiar modelu w pamięci: <strong style={{ color: "#fff" }}>{requiredMemory} GB</strong>. 
+            Szacowany rozmiar modelu w pamięci: <strong style={{ color: "#fff" }}>{requiredMemory} GB</strong>.
             Twoja wolna pamięć VRAM: <strong style={{ color: "var(--accent-cyan)" }}>{vramAvailable.toFixed(1)} GB</strong>.
             Wymagany RAM dla reszty warstw: <strong style={{ color: "var(--accent-purple)" }}>{ramRequired.toFixed(1)} GB</strong> (dostępne ok. {ramAvailableForModel.toFixed(1)} GB).
           </div>
@@ -485,11 +469,11 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, hideS
 
       {/* Tabela audytu kompatybilności oraz prognoza prędkości */}
       <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: "24px" }}>
-        
+
         {/* Lista wskaźników dopasowania podzespołów */}
         <div className="glass-panel" style={{ padding: "24px" }}>
           <h3 style={{ fontSize: "16px", fontWeight: "700", marginBottom: "16px" }}>Szczegółowy audyt kompatybilności</h3>
-          
+
           <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             {/* Audyt VRAM */}
             <div style={{ display: "flex", justifyItems: "center", justifyContent: "space-between", paddingBottom: "10px", borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
@@ -557,13 +541,13 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, hideS
           <h3 style={{ fontSize: "16px", fontWeight: "700" }}>
             {actualTps !== null ? "Rzeczywista szybkość generowania" : "Prognozowana szybkość generowania"}
           </h3>
-          
+
           <div style={{ display: "flex", flexDirection: "column", gap: "12px", flexGrow: 1, justifyContent: "center" }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: "8px", justifyContent: "center" }}>
-              <span 
-                style={{ 
-                  fontSize: "48px", 
-                  fontWeight: "900", 
+              <span
+                style={{
+                  fontSize: "48px",
+                  fontWeight: "900",
                   fontFamily: "var(--font-mono)",
                   color: displayTps > 15 ? "var(--accent-green)" : displayTps > 7 ? "var(--accent-cyan)" : displayTps > 3 ? "var(--accent-amber)" : "var(--accent-red)"
                 }}
@@ -572,7 +556,7 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, hideS
               </span>
               <span style={{ fontSize: "16px", fontWeight: "700", color: "var(--text-secondary)" }}>t/s</span>
             </div>
-            
+
             <div style={{ textAlign: "center", fontSize: "13px", color: "var(--text-muted)" }}>
               {actualTps !== null ? "Prędkość wnioskowania zmierzona podczas testu." : "Szacowana prędkość wnioskowania (Tokeny na sekundę)."}
             </div>
@@ -585,9 +569,9 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, hideS
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
                 <span>Status generowania:</span>
-                <strong 
-                  style={{ 
-                    color: displayTps >= 15 ? "var(--accent-green)" : displayTps >= 7 ? "var(--accent-cyan)" : displayTps >= 3 ? "var(--accent-amber)" : "var(--accent-red)" 
+                <strong
+                  style={{
+                    color: displayTps >= 15 ? "var(--accent-green)" : displayTps >= 7 ? "var(--accent-cyan)" : displayTps >= 3 ? "var(--accent-amber)" : "var(--accent-red)"
                   }}
                 >
                   {displayTps >= 15 ? "Błyskawiczne" : displayTps >= 7 ? "Płynne czytanie" : displayTps >= 3 ? "Powolne" : "Uciążliwie wolne"}

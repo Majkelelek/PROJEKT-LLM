@@ -10,8 +10,14 @@ export default function HistoryPanel({ onSelectRun, activeRunId }) {
     try {
       const localData = localStorage.getItem("projekt_ai_history");
       const data = localData ? JSON.parse(localData) : [];
+      // Zabezpieczenie dla starych wpisów
+      const sanitized = data.map((run, idx) => ({
+        ...run,
+        id: run.id || run.Id || `run-legacy-${idx}-${new Date(run.timestamp || Date.now()).getTime()}`,
+        complexity: run.complexity || "medium"
+      }));
       // Sortowanie chronologiczne od najnowszego do najstarszego
-      setRuns(data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)));
+      setRuns(sanitized.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)));
     } catch (err) {
       console.error("Błąd podczas pobierania raportów z localStorage:", err);
     } finally {

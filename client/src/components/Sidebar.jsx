@@ -29,6 +29,12 @@ export default function Sidebar({ activeTab, onTabChange, ollamaActive, modelsCo
           🧠 Raport analityka AI
         </button>
         <button 
+          className={`nav-item ${activeTab === "compare" ? "active" : ""}`}
+          onClick={() => onTabChange("compare")}
+        >
+          ⚖️ Porównaj wyniki
+        </button>
+        <button 
           className={`nav-item ${activeTab === "history" ? "active" : ""}`}
           onClick={() => onTabChange("history")}
         >

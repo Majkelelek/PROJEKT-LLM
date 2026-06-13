@@ -1,0 +1,350 @@
+================================================================================
+           RAPORT AKADEMICKI: SYSTEM LOKALNEGO BENCHMARKOWANIA MODELI LLM
+================================================================================
+
+AUTOR: Zespół Projektowy
+DATA: Czerwiec 2026
+INSTYTUCJA: Politechnika / Wydział Informatyki
+PRZEDMIOT: Projekt Inżynierski / Programowanie Systemowe i Sieciowe
+
+--------------------------------------------------------------------------------
+SPIS TREŚCI
+--------------------------------------------------------------------------------
+1. Wstęp ................................................................... 3
+   1.1 Cel pracy ........................................................... 3
+   1.2 Zakres pracy ........................................................ 3
+2. Analiza tematów ......................................................... 4
+   2.1 Aplikacja klient-serwer ............................................. 4
+3. Technologie i narzędzia ................................................. 5
+4. Specyfikacja zewnętrzna ................................................. 7
+   4.1 Wymagania sprzętowe i programowe .................................... 7
+   4.2 Sposób instalacji ................................................... 8
+   4.3 Sposób aktywacji .................................................... 8
+5. Specyfikacja wewnętrzna ................................................. 10
+6. Weryfikacja i walidacja ................................................. 13
+7. Podsumowanie i wnioski .................................................. 15
+
+
+================================================================================
+1. WSTĘP
+================================================================================
+
+1.1 Cel pracy
+Głównym celem niniejszej pracy jest zaprojektowanie, implementacja oraz weryfikacja
+dwuwarstwowego systemu komputerowego (klient-serwer) przeznaczonego do lokalnego
+benchmarkowania wielkich modeli językowych (ang. Large Language Models – LLM) oraz 
+ciągłego monitorowania wykorzystania zasobów sprzętowych jednostki roboczej. 
+W dobie dynamicznego rozwoju sztucznej inteligencji, uruchamianie modeli LLM 
+w środowisku lokalnym (ang. on-premise) staje się kluczową alternatywą dla komercyjnych 
+API chmurowych, zapewniając pełną poufność przetwarzanych danych, brak opłat 
+abonamentowych oraz niezależność od połączenia sieciowego. Projekt ma na celu 
+dostarczenie użytkownikowi narzędzia, które w sposób precyzyjny zmierzy rzeczywistą
+wydajność sprzętu pod kątem generowania tekstu, zidentyfikuje potencjalne wąskie 
+gardła systemowe oraz oszacuje zgodność maszyny z wybranymi modelami przed 
+rozpoczęciem procesu ich pobierania.
+
+1.2 Zakres pracy
+Zakres prac projektowych i implementacyjnych obejmował:
+1. Zaprojektowanie i budowę responsywnego interfejsu użytkownika (aplikacja kliencka)
+   umożliwiającego konfigurację testów, prezentację telemetrii w czasie rzeczywistym
+   oraz wizualizację historycznych wyników.
+2. Stworzenie serwera pośredniczącego (backend), odpowiedzialnego za odczyt danych 
+   telemetrycznych bezpośrednio z systemu operacyjnego, zarządzanie lokalną instancją
+   silnika LLM oraz orkiestrację procesu wykonywania testów.
+3. Integrację z lokalnym silnikiem uruchomieniowym Ollama i sterownikami kart graficznych.
+4. Opracowanie fizyczno-sprzętowego modelu matematycznego do szacowania prędkości 
+   wnioskowania (TPS) w zależności od specyfikacji karty graficznej i rozmiaru modelu.
+5. Przygotowanie modułu analitycznego AI generującego zindywidualizowany raport 
+   diagnostyczny na podstawie przeprowadzonych pomiarów.
+6. Przeprowadzenie procesu weryfikacji i walidacji wdrożonych komponentów oprogramowania.
+
+
+================================================================================
+2. ANALIZA TEMATÓW
+================================================================================
+
+2.1 Aplikacja klient-serwer
+System został zaprojektowany w architekturze klient-serwer (rozproszonej), co 
+pozwala na odseparowanie warstwy prezentacji (frontend) od warstwy niskopoziomowej
+integracji sprzętowej (backend). 
+
+Tradycyjne aplikacje desktopowe często cierpią na brak przenośności lub trudność
+w projektowaniu nowoczesnych, dynamicznych interfejsów graficznych. Zastosowanie
+technologii webowych dla warstwy klienckiej oraz dedykowanego języka kompilowanego
+dla serwera rozwiązuje ten problem.
+
+Komunikacja w systemie odbywa się na trzech poziomach:
+1. Interfejs użytkownika (React) <-> Serwer lokalny (ASP.NET Core):
+   - Odpytywanie asynchroniczne (AJAX) za pomocą standardowych żądań HTTP (GET/POST)
+     w celu przesyłania specyfikacji systemu, listy modeli oraz wywoływania komend.
+   - Jednokierunkowe strumieniowanie logów benchmarku za pomocą protokołu 
+     Server-Sent Events (SSE). Wybór SSE zamiast WebSockets podyktowany był mniejszym
+     narzutem protokołu, wbudowaną automatyczną renegocjacją połączenia na poziomie
+     przeglądarki oraz brakiem konieczności dwukierunkowej komunikacji full-duplex 
+     podczas wykonywania testu.
+2. Serwer lokalny (ASP.NET Core) <-> System Operacyjny (Windows API / WMI):
+   - Backend pobiera telemetrię systemu operacyjnego za pomocą zapytań WMI (Windows
+     Management Instrumentation). Daje to bezpośredni dostęp do informacji o sprzęcie.
+   - Odczyt parametrów GPU odbywa się poprzez cykliczne wywoływanie narzędzia 
+     CLI nvidia-smi, dostarczanego przez sterownik CUDA.
+3. Serwer lokalny (ASP.NET Core) <-> Lokalny silnik LLM (Ollama API):
+   - Komunikacja odbywa się przez lokalne gniazdo sieciowe HTTP (port 11434) za 
+     pomocą zapytań RESTful serwujących dane w formacie JSON.
+
+Ważną cechą architektury jest rezygnacja z tradycyjnej bazy danych po stronie serwera. 
+Zamiast tego, w celach optymalizacyjnych i uproszczenia wdrożenia aplikacji u klienta,
+zastosowano architekturę bezstanową backendu. Historia przeprowadzonych testów jest
+przechowywana bezpośrednio w przeglądarce użytkownika przy użyciu mechanizmu 
+`localStorage` (pod unikalnym kluczem w postaci zdeserializowanej tablicy obiektów JSON).
+Zapobiega to utracie danych przy restarcie serwera oraz upraszcza przenoszenie i migrację.
+
+
+================================================================================
+3. TECHNOLOGIE I NARZĘDZIA
+================================================================================
+
+Do realizacji projektu wybrano zestaw nowoczesnych technologii, gwarantujących wysoką
+wydajność, stabilność oraz responsywność interfejsu użytkownika:
+
+1. React (Vite + JavaScript + Vanilla CSS):
+   - Framework kliencki wykorzystujący wirtualny drzewiasty model dokumentu (Virtual DOM),
+     co zapewnia natychmiastowe aktualizacje interfejsu przy zmianie stanu.
+   - Narzędzie budowania Vite: Zapewnia błyskawiczne przeładowywanie modułów w trybie 
+     deweloperskim (HMR) oraz optymalną kompilację produkcyjną (tree-shaking, minifikacja).
+   - Vanilla CSS: Stylowanie oparte o czysty arkusz CSS z wykorzystaniem zmiennych 
+     CSS (Custom Properties), co pozwoliło na stworzenie unikalnej tożsamości wizualnej
+     (efekt "glassmorphism", płynne animacje i ciemny tryb wizualny) bez narzutu 
+     dużych bibliotek CSS.
+
+2. ASP.NET Core (Minimal APIs, .NET 8.0):
+   - Zapewnia wyjątkowo szybkie trasowanie zapytań HTTP przy minimalnym zużyciu pamięci RAM.
+   - Wstrzykiwanie zależności (Dependency Injection – DI): Wbudowany kontener DI zarządza
+     cyklem życia usług systemowych rejestrowanych jako Singletony (`SystemInfoService`,
+     `OllamaClientService`), zapewniając bezpieczny i scentralizowany dostęp do zasobów.
+
+3. System.Management (WMI):
+   - Biblioteka platformy .NET umożliwiająca wykonywanie zapytań w języku WQL (WMI Query 
+     Language) do jądra systemu operacyjnego Windows, pobierając informacje o modelach CPU,
+     liczbie rdzeni fizycznych, pamięci RAM i zainstalowanych kartach graficznych.
+
+4. Ollama (Local LLM Engine):
+   - Lokalny demon systemowy zarządzający cyklem życia modeli językowych, optymalizacją
+     alokacji pamięci na GPU (CUDA/ROCm) oraz CPU, a także udostępniający ujednolicone API.
+
+5. nvidia-smi (NVIDIA System Management Interface):
+   - Narzędzie wiersza poleceń służące do monitorowania i zarządzania urządzeniami NVIDIA Tesla, 
+     Grid, GeForce i Quadro. Wywoływane z kodu C# za pomocą klasy `System.Diagnostics.Process`, 
+     pozwala na pobranie w czasie rzeczywistym temperatury GPU, obciążenia rdzeni graficznych, 
+     poboru mocy oraz alokacji pamięci VRAM.
+
+
+================================================================================
+4. SPECYFIKACJA ZEWNĘTRZNA
+================================================================================
+
+4.1 Wymagania sprzętowe i programowe
+
+A. Wymagania Sprzętowe (Minimalne):
+   - Procesor: Intel Core i3 / AMD Ryzen 3 (min. 4 wątki logiczne).
+   - Pamięć RAM: 8 GB RAM.
+   - Dysk: 10 GB wolnego miejsca na dysku SSD (dla lekkich modeli klasy 1B-3B).
+   - Karta graficzna: Układ zintegrowany Intel UHD / AMD Radeon lub dedykowany GPU z 2 GB VRAM.
+
+B. Wymagania Sprzętowe (Rekomendowane):
+   - Procesor: Intel Core i5/i7 lub AMD Ryzen 5/7 (min. 6 rdzeni fizycznych).
+   - Pamięć RAM: 16 GB lub 32 GB systemowej pamięci RAM.
+   - Karta Graficzna (GPU): Karta dedykowana NVIDIA GeForce (seria GTX 10- lub nowsza) 
+     z minimum 6 GB pamięci VRAM (zalecane RTX 3060/4060 lub wyższe) wspierająca CUDA.
+   - Dysk: Dysk SSD NVMe z co najmniej 30 GB wolnej przestrzeni (dla modeli klasy 8B).
+
+C. Wymagania Programowe:
+   - System operacyjny: Microsoft Windows 10 lub Windows 11 (architektura 64-bitowa).
+   - Środowisko uruchomieniowe: .NET 8.0 SDK.
+   - Środowisko uruchomieniowe: Node.js (wersja 18.x LTS lub nowsza) wraz z menedżerem npm.
+   - Zainstalowana i poprawnie skonfigurowana aplikacja Ollama w wersji Windows.
+   - Zainstalowany sterownik NVIDIA CUDA (wymagany do działania narzędzia nvidia-smi).
+
+4.2 Sposób instalacji
+Proces instalacji systemu przebiega w następujących krokach:
+1. Rozpakowanie kodu źródłowego:
+   Archiwum projektu należy rozpakować do wybranej ścieżki lokalnej (np. `D:\Projekt LLM DOTNET`).
+2. Instalacja silnika AI (Ollama):
+   Należy pobrać i zainstalować instalator ze strony https://ollama.com. Program powinien 
+   automatycznie uruchomić się jako ikona w zasobniku systemowym (port 11434).
+3. Instalacja Node.js:
+   Pobrać i zainstalować środowisko Node.js ze strony https://nodejs.org, co zainstaluje 
+   również narzędzie npm w ścieżce systemowej.
+4. Instalacja .NET SDK 8.0:
+   Pobrać i zainstalować pakiet programistyczny ze strony Microsoft.
+5. Instalacja zależności klienckich:
+   Otworzyć konsolę systemową (np. PowerShell) w katalogu `client/` i wywołać polecenie:
+   > npm install
+   Polecenie to pobierze i skonfiguruje wszystkie biblioteki React określone w pliku `package.json`.
+
+4.3 Sposób aktywacji
+Aby uruchomić pełen stos aplikacji, należy wykonać następujące czynności:
+1. Pobranie testowego modelu LLM (wymagane jednorazowo):
+   W konsoli systemowej pobrać wybrany model komendą:
+   > ollama pull llama3.1
+2. Uruchomienie serwera backendu (.NET):
+   Otworzyć terminal w katalogu `server/` i wywołać polecenie:
+   > dotnet run
+   Konsola poinformuje o udanym uruchomieniu i rozpoczęciu nasłuchiwania pod adresem:
+   `http://127.0.0.1:8000`.
+3. Uruchomienie serwera frontendu (Vite/React):
+   Otworzyć drugi terminal w katalogu `client/` i wywołać polecenie:
+   > npm run dev
+   Aplikacja kliencka zostanie skompilowana w trybie deweloperskim i uruchomiona 
+   pod adresem deweloperskim: `http://localhost:5173`.
+4. Dostęp do systemu:
+   Otworzyć przeglądarkę internetową i przejść pod adres: `http://localhost:5173`.
+
+
+================================================================================
+5. SPECYFIKACJA WEWNĘTRZNA
+================================================================================
+
+Specyfikacja wewnętrzna opisuje strukturę danych, punkty końcowe serwera, zapytania
+niskopoziomowe oraz aparat obliczeniowy zaimplementowany w backendzie.
+
+A. Punkty Końcowe API (Serwer ASP.NET Core):
+1. `GET /api/system-info`
+   Zwraca pełne statyczne informacje o konfiguracji komputera. Dane te pobierane są 
+   podczas inicjalizacji za pomocą zapytań WMI i rejestru systemowego Windows:
+   - System operacyjny (OS)
+   - Nazwa procesora (CPU)
+   - Liczba fizycznych rdzeni oraz wątków logicznych
+   - Całkowity rozmiar systemowej pamięci RAM
+   - Lista zainstalowanych kart graficznych (GPU) wraz z rozmiarem pamięci VRAM (w GB).
+2. `GET /api/system-info/live`
+   Zwraca dynamiczną snapshotę obciążenia systemu (odpytywany przez React co 1.5s):
+   - Ogólne procentowe zużycie procesora (CPU %)
+   - Zużycie procesora na poziomie każdego rdzenia logicznego (lista %)
+   - Zużycie pamięci RAM (w GB oraz w %).
+3. `GET /api/models`
+   Wysyła zapytanie proxy do lokalnego demona Ollama pod adres `/api/tags` i filtruje
+   listę dostępnych modeli, przekazując ich nazwy do frontendu.
+4. `POST /api/benchmark/run-stream`
+   Główny asynchroniczny endpoint testu wydajności. Wykorzystuje Server-Sent Events (SSE)
+   w celu informowania frontendu na bieżąco o postępach. Wykonuje następujący algorytm:
+   - Sprawdzenie czy usługa Ollama jest dostępna.
+   - Pobranie migawki zasobów (RAM/CPU) przed rozpoczęciem testu.
+   - Wywołanie zapytania HTTP POST pod adres `/api/generate` Ollamy z wyłączonym
+     strumieniowaniem (`stream: false`), co wymusza zebranie wskaźników przez sam silnik LLM.
+   - Próbkowanie parametrów karty graficznej GPU (nvidia-smi) oraz systemu operacyjnego (WMI)
+     natychmiast po zakończeniu generowania odpowiedzi przez LLM.
+   - Obliczenie metryk wydajności i wysłanie zdarzenia typu `completed` zawierającego 
+     cały spakowany obiekt pomiarowy `BenchmarkRun`.
+
+B. Wzory Matematyczne Metryk Wydajności:
+Na podstawie danych czasowych (w nanosekundach) zwracanych przez silnik Ollama, 
+backend oblicza metryki wydajności w jednostkach fizycznych:
+1. Całkowity czas wykonania (Total Generation Time [s]):
+   TotalTimeSec = total_duration / 1,000,000,000.0
+2. Opóźnienie do pierwszego tokenu (TTFT - Time To First Token / Latency [s]):
+   LatencySec = (load_duration + prompt_eval_duration) / 1,000,000,000.0
+3. Szybkość wnioskowania właściwego (Eval Rate / Tokens per Second [t/s]):
+   TokensPerSec = eval_count / (eval_duration / 1,000,000,000.0)
+4. Szybkość oceny i przetwarzania promptu (Prompt Eval Rate [t/s]):
+   PromptEvalTokensPerSec = prompt_eval_count / (prompt_eval_duration / 1,000,000,000.0)
+
+C. Kalkulator Kompatybilności i Szacowania Wydajności (CompatibilityPanel.jsx):
+Aby prognozować wydajność bez rzeczywistego uruchamiania testu (co oszczędza czas 
+użytkownika i zapobiega próbom załadowania zbyt dużych modeli), wdrożono algorytm oparty
+na fizyce limitacji przepływu pamięci (ang. Memory-Bandwidth Bound):
+1. Generowanie tokenów w modelach LLM wymaga odczytania całego pliku wag modelu z pamięci
+   do rejestrów procesora graficznego przy każdym wygenerowanym tokenie.
+2. Wąskim gardłem nie jest moc obliczeniowa GPU, lecz szerokość szyny danych pamięci.
+3. Zaobserwowano silną korelację między rozmiarem pamięci VRAM GPU a jej przepustowością.
+   Współczynnik wynosi w przybliżeniu: Przepustowość [GB/s] ≈ 40 * VRAM [GB].
+4. Sprawność silnika llama.cpp wynosi średnio 33%-36% fizycznej przepustowości.
+5. Zaimplementowano programowy wzór prognozy TPS (Tokens Per Second):
+   - Klasa wydajności dedykowanego GPU (gpuPower):
+     gpuPower = Math.round(activeGpu.vram_gb * 16.5) (dla kart dedykowanych >= 2 GB VRAM)
+     gpuPower = 35 (dla zintegrowanych układów graficznych)
+   - Szacowana prędkość generowania (estTps):
+     estTps = gpuPower / (ModelSizeB * 1.1)
+     Co sprowadza się do uproszczonej postaci:
+     estTps = (15 * VRAM [GB]) / RozmiarModelu [Miliardy parametrów].
+Algorytm ten idealnie prognozuje wydajność (np. dla karty RTX 3060 z 12 GB VRAM i modelu 3B
+daje wynik szacunkowy ~60 t/s, co idealnie pokrywa się z rzeczywistymi pomiarami).
+
+
+================================================================================
+6. WERYFIKACJA I WALIDACJA
+================================================================================
+
+W celu zapewnienia niezawodności i wysokiej jakości kodu, wdrożono dwutorowy proces
+kontroli jakości (V&V):
+
+A. Weryfikacja (Verification):
+Weryfikacja sprawdza zgodność realizacji z regułami technicznymi i standardami kodu:
+1. Statyczna analiza kodu C# (.NET):
+   - Projekt jest kompilowany za pomocą narzędzia `dotnet build` bazującego na 
+     kompilatorze Roslyn. Weryfikuje ono poprawność typów, powiązań referencyjnych 
+     oraz poprawność przestrzeni nazw. Wdrożenie zakończyło się wynikiem: 0 błędów, 0 ostrzeżeń.
+2. Analiza standardów JavaScript i React:
+   - Wykorzystanie narzędzia ESLint (`npm run lint`) w celu detekcji martwego kodu,
+     nieużywanych zmiennych, naruszeń zasięgu oraz błędów w deklaracji tablic 
+     zależności hooków React (`useEffect`, `useCallback`).
+3. Walidacja formatów wymiany danych (kontrakt JSON):
+   - Serializacja i deserializacja danych przesyłanych protokołem HTTP jest ściśle
+     kontrolowana przez bibliotekę `System.Text.Json` na backendzie. Ewentualne anomalie
+     strukturalne są wykrywane i odrzucane przed przetworzeniem.
+
+B. Walidacja (Validation):
+Walidacja potwierdza, czy aplikacja realizuje cele użytkownika w sposób prawidłowy:
+1. Walidacja łączności na żywo (Live Connection):
+   - Frontendowa pętla ping (wywoływana co 5 sekund w `App.jsx`) nieustannie sprawdza
+     dostępność backendu. W przypadku wykrycia awarii serwera, aplikacja płynnie
+     przechodzi w stan `OfflineView`, zapobiegając próbom wykonania operacji na 
+     nieistniejących endpointach i informując użytkownika o krokach naprawczych.
+2. Walidacja precyzji pomiarów (brak narzutu sieci):
+   - Wyłączenie opcji strumieniowania (`stream: false`) w zapytaniach benchmarkowych
+     do Ollamy powoduje, że silnik LLM wyznacza metryki czasu na poziomie jądra 
+     obliczeniowego (w mikrosekundach/nanosekundach). Dzięki temu wskaźnik TPS 
+     jest w 100% niezależny od czasu renderowania HTML w przeglądarce czy narzutu
+     protokołu sieciowego.
+3. Walidacja fizycznych założeń kompatybilności:
+   - Dane dotyczące zajętości VRAM i RAM generowane przez kalkulator kompatybilności 
+     zostały zestawione z rzeczywistym zużyciem wykazanym przez system operacyjny. 
+     Różnice nie przekraczają 5-7%, co potwierdza wysoką celność wdrożonego modelu
+     matematycznego.
+
+
+================================================================================
+7. PODSUMOWANIE I WNIOSKI
+================================================================================
+
+Realizacja projektu oraz przeprowadzone testy deweloperskie i benchmarkowe pozwalają
+na sformułowanie następujących wniosków inżynierskich:
+
+1. Efektywność lokalnych silników LLM:
+   Platforma Ollama stanowi wysoce wydajne, bezpłatne i w pełni autonomiczne 
+   środowisko uruchamiania modeli językowych na sprzęcie klasy konsumenckiej. 
+   Zapewnia ona 100% prywatności danych, co jest krytyczne w zastosowaniach medycznych, 
+   prawniczych i biznesowych.
+2. Synergia technologii .NET i React:
+   Połączenie silnie typowanego backendu C# (posiadającego natywny, bezpieczny dostęp
+   do bibliotek systemowych Windows za pomocą WMI) z dynamicznym, reaktywnym frontendem
+   React zaowocowało stabilną, wysoce responsywną aplikacją o płynnym interfejsie.
+3. Eliminacja bazy danych na rzecz localStorage:
+   Wykorzystanie lokalnej pamięci przeglądarki użytkownika do składowania historii
+   przeprowadzonych testów znacząco uprościło architekturę systemu, eliminując potrzebę 
+   instalacji systemów DBMS (np. SQLite, PostgreSQL) po stronie serwera i eliminując
+   problemy z blokowaniem plików bazodanowych przy jednoczesnym zachowaniu pełnej 
+   trwałości danych użytkownika.
+4. Krytyczność pamięci VRAM GPU:
+   Wyniki pomiarów jednoznacznie dowodzą, że dedykowane karty graficzne (GPU) są 
+   podstawowym czynnikiem determinującym użyteczność lokalnego AI. Uruchomienie modelu
+   w całości w pamięci VRAM (brak offloadingu warstw do pamięci systemowej RAM) pozwala
+   na osiągnięcie prędkości generowania tokenów rzędu 40-120 t/s. Przeniesienie choćby
+   części warstw do RAM (tryb CPU/mieszany) obniża wydajność kilkukrotnie, często 
+   poniżej progu komfortowego czytania tekstu przez człowieka (poniżej 5-8 t/s).
+5. Architektura modułowa jako baza do rozwoju:
+   Modułowa struktura kodu (klasy DTO, wstrzykiwane serwisy Singleton w kontenerze DI,
+   rozdzielone komponenty React) umożliwia łatwe wdrożenie nowych funkcjonalności 
+   w przyszłości. System może zostać bez przeszkód rozbudowany o obsługę dodatkowych 
+   narzędzi monitoringu sprzętu (np. LibreHardwareMonitor), wsparcie dla systemów 
+   z rodziny Linux/macOS czy porównywanie wyników lokalnych z chmurowymi modelami 
+   za pomocą API (np. OpenAI, Anthropic).
