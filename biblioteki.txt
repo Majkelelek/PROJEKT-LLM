@@ -6,9 +6,15 @@ Niniejszy plik zawiera szczegółowy opis architektury systemu NeuroBench AI, ws
 
 ## 1. PODSUMOWANIE ZALEŻNOŚCI (BIBLIOTEK)
 
-Łącznie w projekcie bezpośrednio zaimportowano **11 zewnętrznych bibliotek/pakietów** (1 w backendzie i 10 we frontendzie), nie licząc wbudowanych modułów platformy .NET SDK.
+Wszystkie wymienione poniżej biblioteki i pakiety programistyczne są pobierane oraz instalowane **całkowicie automatycznie** podczas standardowego przygotowania środowiska (poprzez komendy `npm install` w katalogu `client` oraz `dotnet build` / `dotnet restore` w katalogu `server`). W kodzie aplikacji **nie ma żadnych dodatkowych bibliotek, które wymagałyby ręcznego pobierania, instalowania zewnętrznymi instalatorami lub kopiowania do folderów**.
 
-### A. BACKEND (server) – 1 zewnętrzna biblioteka NuGet
+### Wymagania systemowe (Instalowane ręcznie w OS):
+Aby uruchomić i rozwijać aplikację, w systemie operacyjnym Windows muszą być zainstalowane następujące narzędzia globalne:
+1. **Ollama** (lokalny serwer LLM) — wymagany do działania testów wydajności i generowania raportów AI (musi działać w tle na porcie `11434`).
+2. **.NET 8.0 SDK** — kompilator i środowisko uruchomieniowe dla backendu C#.
+3. **Node.js (LTS)** — środowisko wymagane do działania menedżera `npm` oraz serwera deweloperskiego `Vite`.
+
+### A. BACKEND (server) – 1 zewnętrzna biblioteka NuGet (Pobierana automatycznie przez dotnet build)
 * **`System.Management`** (wersja 10.0.9)
   * **Zastosowanie:** Odpytuje usługi systemowe Windows Management Instrumentation (WMI). Odpowiada za pobieranie dynamicznego obciążenia procesora, ilości rdzeni fizycznych, wolnego/zajętego RAM oraz szczegółów kart graficznych (w tym wolnej pamięci VRAM).
 * *Wbudowane moduły .NET Core (bez zewnętrznych zależności):*
@@ -16,16 +22,20 @@ Niniejszy plik zawiera szczegółowy opis architektury systemu NeuroBench AI, ws
   * **`Microsoft.Win32.Registry`** – Odczyt rejestru Windows w celu pobrania dokładnego modelu procesora.
   * **`System.Text.Json`** – Natywna, szybka serializacja oraz deserializacja danych JSON.
 
-### B. FRONTEND (client) – 10 zewnętrznych pakietów npm
+### B. FRONTEND (client) – 11 zewnętrznych pakietów npm (Pobierane automatycznie przez npm install)
 * **Zależności produkcyjne (dependencies):**
-  * **`react`** (wersja 19) – Główna biblioteka do tworzenia reaktywnego interfejsu użytkownika i zarządzania stanem.
-  * **`react-dom`** (wersja 19) – Narzędzie renderujące drzewo komponentów React do rzeczywistego drzewa DOM przeglądarki.
+  * **`react`** (wersja ^19.2.6) – Główna biblioteka do tworzenia reaktywnego interfejsu użytkownika i zarządzania stanem.
+  * **`react-dom`** (wersja ^19.2.6) – Narzędzie renderujące drzewo komponentów React do rzeczywistego drzewa DOM przeglądarki.
 * **Narzędzia deweloperskie (devDependencies):**
-  * **`vite`** – Szybki serwer deweloperski wspierający HMR (Hot Module Replacement) oraz kompilator wersji produkcyjnej.
-  * **`@vitejs/plugin-react`** – Oficjalny plugin integrujący framework React z kompilatorem Vite.
-  * **`eslint`** / **`@eslint/js`** / **`eslint-plugin-react-hooks`** / **`eslint-plugin-react-refresh`** – Zestaw reguł analizy kodu JS/React pod kątem błędów w czasie rzeczywistym.
-  * **`globals`** – Zestaw globalnych definicji środowiskowych (np. obiekty `window`, `document`) dla ESLint.
-  * **`@types/react`** / **`@types/react-dom`** – Definicje typów poprawiające podpowiedzi składni w edytorze kodu.
+  * **`vite`** (wersja ^8.0.12) – Szybki serwer deweloperski wspierający HMR (Hot Module Replacement) oraz kompilator wersji produkcyjnej.
+  * **`@vitejs/plugin-react`** (wersja ^6.0.1) – Oficjalny plugin integrujący framework React z kompilatorem Vite.
+  * **`eslint`** (wersja ^10.3.0) – Statyczny analizator kodu JavaScript wykrywający błędy i pilnujący standardów jakości.
+  * **`@eslint/js`** (wersja ^10.0.1) – Oficjalne rekomendowane konfiguracje reguł dla narzędzia ESLint.
+  * **`eslint-plugin-react-hooks`** (wersja ^7.1.1) – Wtyczka ESLint wymuszająca poprawne używanie reguł React Hooks.
+  * **`eslint-plugin-react-refresh`** (wersja ^0.5.2) – Wtyczka ESLint wspierająca prawidłowe działanie Hot Reload dla komponentów React.
+  * **`globals`** (wersja ^17.6.0) – Zestaw definicji obiektów globalnych środowisk przeglądarki i Node.js dla ESLint.
+  * **`@types/react`** (wersja ^19.2.14) – Definicje typów TypeScript dla biblioteki React, poprawiające autouzupełnianie w edytorze kodu.
+  * **`@types/react-dom`** (wersja ^19.2.3) – Definicje typów TypeScript dla biblioteki react-dom.
 
 ### C. INNE PLIKI PROJEKTU (Główny katalog)
 * **`.gitignore`**
