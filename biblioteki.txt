@@ -1,0 +1,295 @@
+# NeuroBench AI - Specyfikacja Techniczna i Struktura Projektu
+
+Niniejszy plik zawiera szczegółowy opis architektury systemu NeuroBench AI, wszystkich plików wchodzących w skład aplikacji, importów (`using` / `import`), parametrów promptów LLM oraz szczegółowy opis mechanizmu zapisu i migracji logów historycznych.
+
+---
+
+## 1. PODSUMOWANIE ZALEŻNOŚCI (BIBLIOTEK)
+
+Łącznie w projekcie bezpośrednio zaimportowano **11 zewnętrznych bibliotek/pakietów** (1 w backendzie i 10 we frontendzie), nie licząc wbudowanych modułów platformy .NET SDK.
+
+### A. BACKEND (server) – 1 zewnętrzna biblioteka NuGet
+* **`System.Management`** (wersja 10.0.9)
+  * **Zastosowanie:** Odpytuje usługi systemowe Windows Management Instrumentation (WMI). Odpowiada za pobieranie dynamicznego obciążenia procesora, ilości rdzeni fizycznych, wolnego/zajętego RAM oraz szczegółów kart graficznych (w tym wolnej pamięci VRAM).
+* *Wbudowane moduły .NET Core (bez zewnętrznych zależności):*
+  * **`System.Net.Http` (HttpClient)** – Komunikacja HTTP z lokalnym API Ollama (`http://localhost:11434`).
+  * **`Microsoft.Win32.Registry`** – Odczyt rejestru Windows w celu pobrania dokładnego modelu procesora.
+  * **`System.Text.Json`** – Natywna, szybka serializacja oraz deserializacja danych JSON.
+
+### B. FRONTEND (client) – 10 zewnętrznych pakietów npm
+* **Zależności produkcyjne (dependencies):**
+  * **`react`** (wersja 19) – Główna biblioteka do tworzenia reaktywnego interfejsu użytkownika i zarządzania stanem.
+  * **`react-dom`** (wersja 19) – Narzędzie renderujące drzewo komponentów React do rzeczywistego drzewa DOM przeglądarki.
+* **Narzędzia deweloperskie (devDependencies):**
+  * **`vite`** – Szybki serwer deweloperski wspierający HMR (Hot Module Replacement) oraz kompilator wersji produkcyjnej.
+  * **`@vitejs/plugin-react`** – Oficjalny plugin integrujący framework React z kompilatorem Vite.
+  * **`eslint`** / **`@eslint/js`** / **`eslint-plugin-react-hooks`** / **`eslint-plugin-react-refresh`** – Zestaw reguł analizy kodu JS/React pod kątem błędów w czasie rzeczywistym.
+  * **`globals`** – Zestaw globalnych definicji środowiskowych (np. obiekty `window`, `document`) dla ESLint.
+  * **`@types/react`** / **`@types/react-dom`** – Definicje typów poprawiające podpowiedzi składni w edytorze kodu.
+
+---
+
+## 2. STRUKTURA PLIKÓW BACKENDU (ASP.NET Core)
+
+### A. Program.cs
+* **Ścieżka:** `server/Program.cs`
+* **Importy (`using`):**
+  ```csharp
+  using System;
+  using System.Text.Json;
+  using System.Text.Json.Serialization;
+  using System.Threading.Tasks;
+  using Microsoft.AspNetCore.Builder;
+  using Microsoft.AspNetCore.Http;
+  using Microsoft.Extensions.DependencyInjection;
+  using Microsoft.Extensions.Hosting;
+  using Microsoft.Extensions.Logging;
+  using NeuroBench.Backend.Models;
+  using NeuroBench.Backend.Services;
+  ```
+* **Opis:** Główny entrypoint backendu ASP.NET Core Web API. Konfiguruje serwer Kestrel na porcie `8000`, rejestruje serwisy jako Singletony (`SystemInfoService`, `DbService`, `OllamaClientService`), włącza reguły CORS (dla portu `5173`) oraz definiuje minimalistyczne endpointy API (system info, live metrics, lista modeli, pobieranie/kasowanie logów, uruchamianie benchmarku SSE, oraz generowanie raportów).
+
+### B. SystemInfoService.cs
+* **Ścieżka:** `server/Services/SystemInfoService.cs`
+* **Importy (`using`):**
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Linq;
+  using System.Management;
+  using System.Runtime.InteropServices;
+  using Microsoft.Extensions.Logging;
+  using Microsoft.Win32;
+  using NeuroBench.Backend.Models;
+  ```
+* **Opis:** Usługa zbierająca specyfikację komputera. Pobiera statyczne informacje o procesorze (z rejestru systemu Windows pod kluczem `CentralProcessor\0`), pamięci RAM oraz GPU (za pomocą WMI). Uruchamia również zapytania dynamiczne (live telemetry) o stopień obciążenia wątków CPU i wolnego RAM.
+
+### C. OllamaClientService.cs
+* **Ścieżka:** `server/Services/OllamaClientService.cs`
+* **Importy (`using`):**
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Diagnostics;
+  using System.IO;
+  using System.Net.Http;
+  using System.Net.Http.Json;
+  using System.Runtime.CompilerServices;
+  using System.Text;
+  using System.Text.Json;
+  using System.Text.Json.Serialization;
+  using System.Threading;
+  using System.Threading.Tasks;
+  using Microsoft.Extensions.Logging;
+  using NeuroBench.Backend.Models;
+  ```
+* **Opis:** Klient łączący się z lokalnym API Ollama (`http://localhost:11434`). Odpytuje o status serwisu, pobiera listę modeli (`/api/tags`), przeprowadza test wnioskowania benchmarkowego (`/api/generate`) oraz odpowiada za wygenerowanie pełnego raportu eksperckiego z analizą kompatybilności sprzętowej.
+
+### D. DbService.cs
+* **Ścieżka:** `server/Services/DbService.cs`
+* **Importy (`using`):**
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.IO;
+  using System.Linq;
+  using System.Text.Json;
+  using Microsoft.Extensions.Logging;
+  using NeuroBench.Backend.Models;
+  ```
+* **Opis:** Silnik bazy danych operujący na pliku płaskim JSON. Odpowiada za odczyt, dodawanie, usuwanie i zapis rekordów testów. Obsługuje także automatyczną migrację logów ze starego backendu Pythona.
+
+### E. BenchmarkModels.cs
+* **Ścieżka:** `server/Models/BenchmarkModels.cs`
+* **Importy (`using`):**
+  ```csharp
+  using System;
+  using System.Collections.Generic;
+  using System.Text.Json.Serialization;
+  ```
+* **Opis:** Klasy modeli C# (DTO) odwzorowujące struktury danych przesyłanych i zapisywanych w systemie (np. `BenchmarkRun`, `OllamaResult`, `SystemSpecs`, `LiveMetrics`).
+
+---
+
+## 3. STRUKTURA PLIKÓW FRONTENDU (React)
+
+### A. main.jsx
+* **Ścieżka:** `client/src/main.jsx`
+* **Opis:** Inicjalizuje aplikację React w elemencie DOM o ID `root`. Wczytuje style `index.css` oraz główny komponent `App.jsx`.
+
+### B. App.jsx
+* **Ścieżka:** `client/src/App.jsx`
+* **Opis:** Centralny komponent aplikacji. Odpowiada za nawigację między zakładkami (Specyfikacja, Uruchom testy, Raport AI, Zapisane wyniki) oraz realizuje co 5 sekund zapytanie (ping) w tle do API backendu, dbając o stałe odświeżanie statusu połączenia oraz listy modeli LLM.
+
+### C. Dashboard.jsx
+* **Ścieżka:** `client/src/components/Dashboard.jsx`
+* **Opis:** Wizualny kokpit telemetrii. Wyświetla statyczne podzespoły oraz dynamiczny podgląd obciążenia CPU (z podziałem na poszczególne wątki) oraz RAM, odświeżany co 1.5 sekundy. Wykorzystuje interaktywne elementy SVG.
+
+### D. BenchmarkPanel.jsx
+* **Ścieżka:** `client/src/components/BenchmarkPanel.jsx`
+* **Opis:** Panel konfiguracyjny testu. Pozwala na wybór modelu oraz poziomu trudności promptu (szybki / średni / złożony). Nasłuchuje logów z backendu przez SSE i wyświetla je w wirtualnej konsoli. Po teście pokazuje szczegółowe metryki wydajności wraz z wygenerowaną odpowiedzią tekstową.
+
+### E. CompatibilityPanel.jsx
+* **Ścieżka:** `client/src/components/CompatibilityPanel.jsx`
+* **Opis:** Kalkulator kompatybilności. Oblicza wolny VRAM i przypisuje warstwy modelu (np. Llama 3.1 8B w kwantyzacji Q4 zajmuje ok. 5.6 GB) do pamięci GPU oraz RAM systemowego, graficznie obrazując ich rozkład.
+
+### F. AIAnalyst.jsx
+* **Ścieżka:** `client/src/components/AIAnalyst.jsx`
+* **Opis:** Wyświetla ekspercki raport wygenerowany przez LLM za pomocą własnego parsera formatu Markdown. Na dole zawiera zintegrowaną sekcję kompatybilności oraz wygenerowaną surową odpowiedź modelu.
+
+### G. HistoryPanel.jsx
+* **Ścieżka:** `client/src/components/HistoryPanel.jsx`
+* **Opis:** Spis wszystkich zapisanych testów. Umożliwia ładowanie minionych pomiarów, eksport surowych danych JSON oraz pobieranie gotowych raportów `.md`. Wyświetla również kolorowe etykiety (Szybki, Średni, Zaawansowany) charakteryzujące stopień złożoności testu.
+
+---
+
+## 4. SYSTEM ZAPISYWANIA LOGÓW I WYNIKÓW (localStorage w przeglądarce)
+
+Wyniki pomiarów oraz wygenerowane raporty są zapisywane wyłącznie po stronie klienta (przeglądarki) z użyciem mechanizmu **`localStorage`**. Backend ASP.NET Core odpowiada jedynie za pomiary i generowanie raportów, nie przechowując żadnych danych historycznych na serwerze.
+
+### A. Gdzie i jak zapisują się pliki logów?
+* **Klucz w storage:** Wszystkie wyniki są przechowywane pod kluczem **`neurobench_history`** w domenie i porcie frontendu (np. `http://localhost:5173`).
+* **Inicjalizacja:** Przy uruchomieniu aplikacji React, w komponencie `App.jsx` pobierana jest lista logów z `localStorage`. Najnowszy pomiar ustawiany jest jako domyślny aktywny widok w zakładkach raportu AI.
+* **Dodawanie wyników:** Po pomyślnym zakończeniu benchmarku, dane z SSE (zawierające specyfikację, metryki oraz gotowy raport AI) są odbierane przez `BenchmarkPanel.jsx`, a następnie przekazywane do `App.jsx`, gdzie zostają dodane do tablicy w `localStorage` i zapisane jako ciąg znaków JSON.
+* **Usuwanie wpisów:** W zakładce `HistoryPanel.jsx` użytkownik może usunąć dowolny rekord, co powoduje wyfiltrowanie tablicy i ponowne zapisanie zaktualizowanej listy w `localStorage`.
+
+### B. Jak wygląda struktura zapisu?
+Logi zapisywane są jako tablica obiektów JSON. Każdy pojedynczy rekord odpowiada poniższej strukturze:
+
+```json
+{
+  "id": "1fa30a0a-be7d-411a-8e2b-ffad67a6d88f",
+  "timestamp": "2026-06-13T02:15:30.1234567+02:00",
+  "selected_model": "llama3.1:latest",
+  "complexity": "quick",
+  "specs": {
+    "os_version": "Microsoft Windows 10 Pro (10.0.19045)",
+    "cpu_model": "AMD Ryzen 5 4600H with Radeon Graphics",
+    "cpu_cores": 6,
+    "cpu_threads": 12,
+    "ram_total_gb": 23.37,
+    "gpus": [
+      "NVIDIA GeForce GTX 1650",
+      "AMD Radeon(TM) Graphics"
+    ],
+    "gpu_details": [
+      {
+        "name": "NVIDIA GeForce GTX 1650",
+        "vram_mb": 4096.0,
+        "is_nvidia": true
+      }
+    ],
+    "python_version": ".NET 8.0 (ASP.NET Core)"
+  },
+  "results": {
+    "ollama": {
+      "model": "llama3.1:latest",
+      "response": "Sztuczna inteligencja to dziedzina informatyki zajmująca się tworzeniem systemów zdolnych do wykonywania zadań wymagających ludzkiego myślenia.",
+      "total_time_sec": 3.42,
+      "latency_sec": 0.15,
+      "tokens_per_sec": 7.84,
+      "prompt_eval_tokens_per_sec": 34.61,
+      "tokens_generated": 26
+    }
+  },
+  "ai_report": "# Ekspercka ocena wydajności AI\n\nPodsumowując, komputer wyposażony w procesor..."
+}
+```
+
+### C. Zalety i ograniczenia przechowywania w przeglądarce
+* **Zalety:**
+  - Całkowita niezależność od plików serwera (kasowanie, aktualizacja lub przenoszenie backendu nie powoduje utraty historii).
+  - Błyskawiczny czas dostępu (odczyt bezpośrednio z pamięci RAM przeglądarki).
+  - Brak narzutu sieciowego na operacje pobierania i kasowania logów.
+* **Ograniczenia:**
+  - Limit pamięci `localStorage` wynosi 5 MB (wystarczający na kilkadziesiąt/kilkaset testów z pełnymi raportami Markdown).
+  - Historia jest unikalna dla danej przeglądarki i portu. Wyczyszczenie pamięci podręcznej witryny lub otwarcie w innej przeglądarce (np. przesiadka z Chrome na Firefox) spowoduje niewyświetlenie wcześniejszych wyników.
+
+---
+
+## 5. KONFIGURACJA PROMPTÓW I PARAMETRÓW LLM
+
+Benchmark testuje system przy pomocy trzech dedykowanych scenariuszy złożoności zapytań:
+
+### A. Poziom: Szybki (quick)
+* **Prompt testowy:** `"Wyjaśnij w jednym zdaniu, czym jest sztuczna inteligencja."`
+* **Parametry:** `temperature = 0.1`, `num_predict` (limit tokenów) = `120`.
+* **Raport AI:** Skrócona wersja (maksymalnie 3 zdania).
+
+### B. Poziom: Średni (medium)
+* **Prompt testowy:** `"Napisz krótki esej składający się z dwóch akapitów, wyjaśniający czym jest uczenie maszynowe (Machine Learning) oraz jak sieci neuronowe przetwarzają informacje."`
+* **Parametry:** `temperature = 0.4`, `num_predict` (limit tokenów) = `600`.
+* **Raport AI:** Standardowa, zwięzła analiza (2-3 akapity).
+
+### C. Poziom: Zaawansowany (complex)
+* **Prompt testowy:** `"Napisz wyczerpujący i szczegółowy artykuł na temat ewolucji mikroprocesorów od lat 70. do dziś, wyjaśniając różnice między architekturami CISC a RISC, x86 a ARM oraz znaczenie rozszerzeń wektorowych AVX i rdzeni Tensor w nowoczesnym wnioskowaniu sztucznej inteligencji. Artykuł powinien mieć co najmniej 5 akapitów."`
+* **Parametry:** `temperature = 0.7`, `num_predict` (limit tokenów) = `1500`.
+* **Raport AI:** Rozbudowany raport z pełną strukturą sekcji w formacie Markdown (podsumowanie menedżerskie, analiza podzespołów, rekomendacje uaktualnień, najlepsze zastosowania).
+
+---
+
+## 6. METODOLOGIA KOMUNIKACJI Z SERWISEM OLLAMA (API HTTP)
+
+Serwer backendowy ASP.NET Core komunikuje się z lokalnym silnikiem LLM Ollama za pomocą standardowego klienta HTTP (`HttpClient`). Wszystkie żądania są wysyłane na domyślny adres lokalny: **`http://localhost:11434`**.
+
+### A. Endpointy API wykorzystywane w aplikacji
+
+#### 1. Pobieranie zainstalowanych modeli (`GET /api/tags`)
+* **Opis:** Służy do pobrania listy wszystkich modeli językowych, które użytkownik pobrał lokalnie na dysk (np. komendą `ollama pull`).
+* **Zastosowanie:** Backend odpytuje ten endpoint podczas inicjalizacji oraz w cyklicznym teście połączenia, aby przekazać listę modeli do wyboru w interfejsie użytkownika.
+* **Przykładowa odpowiedź:**
+  ```json
+  {
+    "models": [
+      {
+        "name": "llama3.1:latest",
+        "model": "llama3.1:latest",
+        "size": 4661224854,
+        "details": {
+          "parent_model": "",
+          "format": "gguf",
+          "family": "llama",
+          "families": ["llama"],
+          "parameter_size": "8.0B",
+          "quantization_level": "Q4_K_M"
+        }
+      }
+    ]
+  }
+  ```
+
+#### 2. Test wydajności wnioskowania (`POST /api/generate`)
+* **Opis:** Przesyła prompt testowy do wybranego modelu w celu zmierzenia parametrów szybkości generowania oraz opóźnień sprzętowych.
+* **Format zapytania:**
+  ```json
+  {
+    "model": "llama3.1:latest",
+    "prompt": "[Tekst promptu w zależności od wybranej złożoności]",
+    "stream": false,
+    "options": {
+      "temperature": 0.4,
+      "num_predict": 600,
+      "num_gpu": -1
+    }
+  }
+  ```
+  * `stream = false` – Zabezpiecza przed strumieniowaniem. Ollama generuje całą odpowiedź i zwraca ją w jednym bloku, co pozwala precyzyjnie zmierzyć czas całkowity i uniknąć narzutów sieciowych.
+  * `num_gpu = -1` – Wymusza automatyczny dobór podziału warstw pomiędzy kartę graficzną a pamięć operacyjną RAM i procesor.
+* **Kluczowe metryki w odpowiedzi:**
+  Po zakończeniu generowania Ollama zwraca obiekt zawierający wygenerowany tekst (`response`) oraz szczegółowe czasy operacji podane w nanosekundach:
+  * `total_duration` – Całkowity czas wykonania żądania.
+  * `load_duration` – Czas ładowania modelu LLM z dysku do pamięci RAM/VRAM.
+  * `prompt_eval_count` – Liczba tokenów w zadanym pytaniu.
+  * `prompt_eval_duration` – Czas poświęcony na przeanalizowanie pytania wejściowego.
+  * `eval_count` – Liczba wygenerowanych tokenów odpowiedzi.
+  * `eval_duration` – Czas poświęcony na samo generowanie tekstu wyjściowego.
+
+### B. Algorytm wyliczania wydajności (.NET)
+W pliku `OllamaClientService.cs` (metoda `RunLlmBenchmarkAsync`) czasy w nanosekundach są przeliczane na sekundy (dzielenie przez $10^9$), a następnie aplikacja oblicza:
+* **Prędkość generowania (Tokens per second):**
+  $$\text{t/s} = \frac{\text{eval\_count}}{\text{eval\_duration (s)}}$$
+* **Prędkość oceny promptu (Prompt Eval Tokens per second):**
+  $$\text{Prompt t/s} = \frac{\text{prompt\_eval\_count}}{\text{prompt\_eval\_duration (s)}}$$
+* **Opóźnienie do pierwszego tokenu (Latency / Time to First Token - TTFT):**
+  $$\text{Latency (s)} = \frac{\text{load\_duration} + \text{prompt\_eval\_duration}}{10^9}$$
+
