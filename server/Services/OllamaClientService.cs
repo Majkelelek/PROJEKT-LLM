@@ -15,14 +15,22 @@ using ProjektAI.Backend.Models;
 
 namespace ProjektAI.Backend.Services
 {
-    // Klient HTTP do komunikacji z lokalną usługą Ollama na porcie 11434.
+    /// <summary>
+    /// Usługa kliencka obsługująca komunikację REST HTTP z lokalnym silnikiem uruchomieniowym Ollama.
+    /// Odpowiada za odpytywanie o listę zainstalowanych modeli językowych, parametry modeli,
+    /// przeprowadzanie testów wnioskowania (generowania tekstu) oraz pobieranie raportów analitycznych.
+    /// </summary>
     public class OllamaClientService
     {
         private const string OllamaBaseUrl = "http://localhost:11434";
         private readonly HttpClient _httpClient;
         private readonly ILogger<OllamaClientService> _logger;
 
-        // Inicjalizacja klienta i ustawienie limitu czasu (timeout) na 15 minut (potrzebne przy cięższych modelach/raportach)
+        /// <summary>
+        /// Inicjalizuje instancję klienta Ollama. Ustawia 15-minutowy limit czasu żądania (timeout),
+        /// co zabezpiecza przed przerwaniem pobierania danych w przypadku generowania długich raportów AI
+        /// na słabszych konfiguracjach sprzętowych.
+        /// </summary>
         public OllamaClientService(HttpClient httpClient, ILogger<OllamaClientService> logger)
         {
             _httpClient = httpClient;
@@ -30,7 +38,9 @@ namespace ProjektAI.Backend.Services
             _httpClient.Timeout = TimeSpan.FromMinutes(15);
         }
 
-        // Sprawdza czy usługa Ollama działa, wysyłając szybkie zapytanie do API tags
+        /// <summary>
+        /// Wykonuje szybkie zapytanie diagnostyczne, aby potwierdzić czy lokalny demon Ollama jest aktywny.
+        /// </summary>
         public async Task<bool> IsOllamaRunningAsync()
         {
             try
@@ -75,7 +85,10 @@ namespace ProjektAI.Backend.Services
             return modelsList;
         }
 
-        // Pobiera szczegółową listę modeli pobranych lokalnie w Ollamie
+        /// <summary>
+        /// Pobiera szczegółowe informacje techniczne o zainstalowanych lokalnie modelach językowych.
+        /// Odczytuje parametry takie jak rozmiar modelu, stopień kwantyzacji oraz przynależność do rodziny modeli.
+        /// </summary>
         public async Task<List<OllamaModelInfo>> GetOllamaModelsDetailedAsync()
         {
             var modelsList = new List<OllamaModelInfo>();
@@ -111,8 +124,14 @@ namespace ProjektAI.Backend.Services
             return modelsList;
         }
 
-        // Uruchamia test wydajnościowy (Benchmark) dla wybranego modelu LLM na określonym poziomie złożoności.
-        // Opcjonalnie przyjmuje SystemInfoService do próbkowania metryk GPU i RAM podczas testu.
+        /// <summary>
+        /// Uruchamia benchmark wydajnościowy dla wybranego modelu LLM. 
+        /// Generuje obciążenie poprzez wykonanie zapytania tekstowego do modelu z parametrem stream=false.
+        /// W trakcie generowania uruchamia równoległe monitorowanie karty graficznej przy użyciu nvidia-smi.
+        /// </summary>
+        /// <param name="model">Nazwa modelu do przetestowania (np. llama3.1)</param>
+        /// <param name="complexity">Poziom trudności testu: quick, medium, complex</param>
+        /// <param name="sysInfo">Serwis telemetryczny używany do równoległego próbkowania GPU i snapshotów RAM/CPU</param>
         public async Task<OllamaResult> RunLlmBenchmarkAsync(string model, string complexity = "medium", SystemInfoService? sysInfo = null)
         {
             string paramSize = "";
@@ -180,11 +199,12 @@ namespace ProjektAI.Backend.Services
             double peakPowerDraw = 0, peakPowerLimit = 0, peakGpuTemp = 0;
             bool gpuAvailable = false;
 
-            // Uruchamiamy pętlę próbkującą GPU w tle — zbiera wartości co 1.5s przez cały czas generowania
+            // Uruchamiamy pętlę próbkującą GPU w tle — zbiera wartości co 750ms przez cały czas generowania
             using var cts = new CancellationTokenSource();
             var samplingTask = Task.Run(async () =>
             {
                 if (sysInfo == null) return;
+                _logger.LogInformation("[Telemetry] Rozpoczęto próbkowanie GPU w tle (częstotliwość: 750ms).");
                 while (!cts.Token.IsCancellationRequested)
                 {
                     var sample = await sysInfo.GetNvidiaSmiAsync();
@@ -198,6 +218,8 @@ namespace ProjektAI.Backend.Services
                         sample.TryGetValue("power_limit", out double powerLim);
                         sample.TryGetValue("temperature", out double temp2);
 
+                        _logger.LogInformation("[Telemetry] Pobrano próbkę GPU: VRAM={vUsed}MB, Obciążenie={util}%, Pobór mocy={power}W, Temp={temp2}°C", vUsed, util, power, temp2);
+
                         if (vUsed    > peakVramUsed)   peakVramUsed   = vUsed;
                         if (vTotal   > peakVramTotal)   peakVramTotal  = vTotal;
                         if (util     > peakGpuUtil)     peakGpuUtil    = util;
@@ -205,7 +227,7 @@ namespace ProjektAI.Backend.Services
                         if (powerLim > peakPowerLimit)  peakPowerLimit = powerLim;
                         if (temp2    > peakGpuTemp)     peakGpuTemp    = temp2;
                     }
-                    try { await Task.Delay(1500, cts.Token); }
+                    try { await Task.Delay(750, cts.Token); }
                     catch (TaskCanceledException) { break; }
                 }
             }, cts.Token);
@@ -219,6 +241,39 @@ namespace ProjektAI.Backend.Services
             // Zatrzymujemy pętlę próbkującą po zakończeniu generowania
             await cts.CancelAsync();
             try { await samplingTask; } catch { /* ignorujemy TaskCanceledException */ }
+
+            _logger.LogInformation("[Telemetry] Zakończono próbkowanie GPU. Wartości szczytowe: Peak VRAM={peakVramUsed}MB, Peak Util={peakGpuUtil}%, Peak Temp={peakGpuTemp}°C, Peak Power={peakPowerDraw}W", peakVramUsed, peakGpuUtil, peakGpuTemp, peakPowerDraw);
+
+            // Odpytujemy silnik Ollama o rzeczywistą alokację pamięci załadowanego modelu z punktu końcowego /api/ps
+            long modelSizeBytes = 0;
+            long modelSizeVramBytes = 0;
+            try
+            {
+                var psResponse = await _httpClient.GetAsync($"{OllamaBaseUrl}/api/ps");
+                if (psResponse.IsSuccessStatusCode)
+                {
+                    var psData = await psResponse.Content.ReadFromJsonAsync<OllamaPsResponse>();
+                    if (psData?.Models != null)
+                    {
+                        var activeModel = psData.Models.Find(m => m.Name == model || m.Model == model);
+                        if (activeModel != null)
+                        {
+                            modelSizeBytes = activeModel.SizeBytes;
+                            modelSizeVramBytes = activeModel.SizeVramBytes;
+                            _logger.LogInformation("[Telemetry] Odczytano rzeczywistą zajętość z /api/ps: Model={Model}, Pamięć ogółem={Size} B ({SizeGb:F2} GB), w tym VRAM={SizeVram} B ({SizeVramGb:F2} GB)", 
+                                activeModel.Name, modelSizeBytes, modelSizeBytes / 1e9, modelSizeVramBytes, modelSizeVramBytes / 1e9);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("[Telemetry] Nie znaleziono modelu '{Model}' w aktywnych modelach /api/ps", model);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[Telemetry] Błąd pobierania danych o pamięci załadowanego modelu z /api/ps");
+            }
 
             // Pobieramy końcową migawkę RAM/CPU (po obciążeniu)
             var (ramAfterUsed, ramAfterTotal, ramAfterPct, cpuAfterPct) = sysInfo != null ? sysInfo.GetSystemSnapshot() : (0, 0, 0, 0);
@@ -282,7 +337,9 @@ namespace ProjektAI.Backend.Services
                 // Parametry modelu odczytane z Ollamy
                 ParameterSize = paramSize,
                 QuantizationLevel = quantLevel,
-                Family = family
+                Family = family,
+                ModelSizeBytes = modelSizeBytes,
+                ModelSizeVramBytes = modelSizeVramBytes
             };
         }
 
@@ -483,6 +540,27 @@ Raport musi być w całości napisany w języku polskim. Użyj profesjonalnego, 
 
             [JsonPropertyName("eval_count")]
             public int EvalCount { get; set; }
+        }
+
+        private class OllamaPsResponse
+        {
+            [JsonPropertyName("models")]
+            public List<OllamaPsModelItem>? Models { get; set; }
+        }
+
+        private class OllamaPsModelItem
+        {
+            [JsonPropertyName("name")]
+            public string? Name { get; set; }
+
+            [JsonPropertyName("model")]
+            public string? Model { get; set; }
+
+            [JsonPropertyName("size")]
+            public long SizeBytes { get; set; }
+
+            [JsonPropertyName("size_vram")]
+            public long SizeVramBytes { get; set; }
         }
     }
 }

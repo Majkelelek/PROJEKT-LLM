@@ -25,5 +25,13 @@ namespace ProjektAI.Backend.Models
         // Procentowe zużycie pamięci RAM (%)
         [JsonPropertyName("ram_percent")]
         public double RamPercent { get; set; }
+
+        // Rzeczywista zajęta pamięć VRAM (w MB) z nvidia-smi
+        [JsonPropertyName("gpu_vram_used_mb")]
+        public double GpuVramUsedMb { get; set; }
+
+        // Rzeczywista całkowita pamięć VRAM (w MB) z nvidia-smi
+        [JsonPropertyName("gpu_vram_total_mb")]
+        public double GpuVramTotalMb { get; set; }
     }
 }

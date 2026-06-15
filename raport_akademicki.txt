@@ -233,7 +233,7 @@ A. Punkty Końcowe API (Serwer ASP.NET Core):
    - Wywołanie zapytania HTTP POST pod adres `/api/generate` Ollamy z wyłączonym
      strumieniowaniem (`stream: false`), co wymusza zebranie wskaźników przez sam silnik LLM.
    - Równoległe uruchomienie pętli próbkującej GPU (nvidia-smi) w osobnym zadaniu asynchronicznym
-     (`Task.Run`), która odpytuje kartę graficzną co 1.5 sekundy przez cały czas trwania
+     (`Task.Run`), która odpytuje kartę graficzną co 750 milisekund przez cały czas trwania
      generowania i śledzi wartości szczytowe (peak) dla: zużycia VRAM, obciążenia rdzeni GPU,
      poboru mocy oraz temperatury.
    - Po zakończeniu generowania — zatrzymanie pętli próbkującej przez `CancellationTokenSource`
@@ -264,24 +264,36 @@ heurystyk ani wartości domyślnych:
      "Brak informacji" i nie przeprowadza żadnych obliczeń.
    - Rodzina modelu (family): pobierana z tego samego źródła. Nigdy nie jest
      odgadywana na podstawie nazwy pliku lub tagu modelu.
-   - Kwantyzacja modelu (quantization_level): pobierana z danych Ollamy. Jeśli
-     kwantyzacja nie pasuje do żadnej ze znanych wartości (Q4_K_M, Q8_0, FP16),
-     moduł oznacza dane jako niedostępne zamiast estymować parametry.
+   - Kwantyzacja modelu (quantization_level): pobierana z danych Ollamy. Wspierane
+     są elastyczne reguły dopasowania prefiksów (np. Q4, Q8 itp.) w celu obsłużenia
+     różnych wariantów kwantyzacji (np. Q4_0, Q4_K_M).
    - Dane sprzętu (VRAM, RAM, CPU): pobierane przez backend z WMI. Jeśli dane
      są niedostępne (wartość null), odpowiedni wskaźnik wyświetla "Brak informacji".
+   - Rzeczywista zajętość pamięci aktywnego modelu (Ollama Active Memory Telemetry):
+     Pobierana przez backend bezpośrednio po zakończeniu benchmarku z punktu końcowego
+     `/api/ps` silnika Ollama. Pozwala to na precyzyjne odczytanie rzeczywistej alokacji
+     wag modelu w pamięci RAM (`model_size_bytes`) oraz VRAM (`model_size_vram_bytes`).
+     Jeśli te dane są dostępne, system rezygnuje ze wzorów szacunkowych i prezentuje
+     dokładne wartości fizyczne.
 
-2. Obliczenia alokacji pamięci (tylko gdy dostępne są kompletne dane systemowe):
-   - Szacowany rozmiar modelu w pamięci [GB]:
+2. Obliczenia alokacji pamięci:
+   - Przypadek A: Brak pomiarów fizycznych (symulacja przedpobranego modelu):
      requiredMemory = RozmiarB × kwant.multiplier + kwant.overhead
-   - Liczba warstw w VRAM: layersInVram = floor(vramDostępne / (requiredMemory / numLayers))
-   - Pozostałe warstwy trafiają do RAM lub pliku wymiany (swap na dysku).
+     Liczba warstw w VRAM: layersInVram = floor(vramDostępne / (requiredMemory / numLayers))
+     Pozostałe warstwy trafiają do RAM lub pliku wymiany (swap na dysku).
+     *Uwaga:* System pobiera surowe, fizyczne parametry całkowitej pamięci VRAM oraz RAM bezpośrednio z narzędzi systemowych (WMI / nvidia-smi) bez odejmowania sztucznych lub szacunkowych rezerw w kodzie.
+   - Przypadek B: Dostępne pomiary z /api/ps (po wykonaniu testu):
+     System pomija wzory szacunkowe i wizualizuje dokładną zajętość fizyczną:
+     vramAllocated = model_size_vram_bytes, ramAllocated = model_size_bytes - model_size_vram_bytes.
 
 3. Wskaźnik zgodności (Compatibility Score):
-   Obliczany wyłącznie gdy dostępne są jednocześnie: rozmiar modelu, kwantyzacja
-   i dostępna pamięć RAM z systemu. Wynik to wartość od 10% do 100%:
-   - 100%: model mieści się w całości w pamięci VRAM.
-   - 45–90%: część warstw jest przeładowywana do RAM (tryb hybrydowy).
-   - 10–40%: model przekracza dostępną pamięć — zostanie użyty plik wymiany.
+   - W przypadku A (symulacja): Obliczany na podstawie szacowanego podziału pamięci.
+   - W przypadku B (faktyczny pomiar): compatibilityScore = (vramAllocated / model_size_bytes) * 100
+     Wyraża on dokładny, fizyczny procent wag modelu załadowanych do najszybszej pamięci GPU.
+     Wynik to wartość od 10% do 100%:
+     - 100%: model mieści się w całości w pamięci VRAM.
+     - 45–90%: część warstw jest przeładowywana do RAM (tryb hybrydowy).
+     - 10–40%: model przekracza dostępną pamięć — zostanie użyty plik wymiany.
 
 4. Prędkość generowania:
    Sekcja szybkości wyświetla wyłącznie zmierzoną wartość tokens/sekundę (t/s)
@@ -346,7 +358,7 @@ Ten diagram sekwencji przedstawia cały przepływ procesu benchmarkowania krok p
 6. Następnie backend wysyła żądanie wykonania wnioskowania (generowania tekstu) do Ollamy poprzez endpoint POST `/api/generate` z flagą `stream: false`. Dzięki wyłączeniu strumieniowania po stronie Ollamy, silnik sam dokładnie mierzy czas generowania bezpośrednio na poziomie jądra sprzętowego.
 7. Po ukończeniu generowania, Ollama zwraca backendowi odpowiedź z surowymi metrykami czasowymi (podanymi w nanosekundach).
 8. Równocześnie z uruchomieniem generowania (krok 6) backendowy moduł startuje w tle pętlę
-   próbkującą opartą na `Task.Run`, która co 1.5 sekundy wywołuje narzędzie nvidia-smi.
+   próbkującą opartą na `Task.Run`, która co 750 milisekund wywołuje narzędzie nvidia-smi.
    Każda próbka porównywana jest z dotychczasowym maksimum, dzięki czemu w wyniku końcowym
    zapisywane są wartości szczytowe (peak): zużycie VRAM, obciążenie GPU, pobrór mocy i temperatura.
    Po zakończeniu generowania pętla jest przerywana przez `CancellationTokenSource`.
@@ -380,8 +392,8 @@ sequenceDiagram
     Note over O: Wnioskowanie (Generowanie tokenów)
     O-->>B: Odpowiedź JSON (Metryki czasowe w nanosekundach)
 
-    B-->>F: SSE: status="running", message="Uruchamianie pętli próbkowania GPU (co 1.5s)..."
-    loop Co 1.5 sekundy (równoległe z generowaniem)
+    B-->>F: SSE: status="running", message="Uruchamianie pętli próbkowania GPU (co 750ms)..."
+    loop Co 750 milisekund (równoległe z generowaniem)
         B->>S: GetNvidiaSmiAsync() (Próbka: VRAM, Util, Watt, Temp)
         S-->>B: Metryki GPU (jedna próbka)
         Note over B: Jeśli nowa próbka > peak, zaktualizuj wartość szczytową

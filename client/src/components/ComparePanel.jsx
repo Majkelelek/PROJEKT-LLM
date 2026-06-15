@@ -233,7 +233,9 @@ export default function ComparePanel() {
                 fixedModelDetails={{
                   parameter_size: runA.results?.ollama?.parameter_size,
                   quantization_level: runA.results?.ollama?.quantization_level,
-                  family: runA.results?.ollama?.family
+                  family: runA.results?.ollama?.family,
+                  model_size_bytes: runA.results?.ollama?.model_size_bytes,
+                  model_size_vram_bytes: runA.results?.ollama?.model_size_vram_bytes
                 }}
                 hideSelectors={true}
                 actualTps={runA.results?.ollama?.tokens_per_sec}
@@ -368,7 +370,9 @@ export default function ComparePanel() {
                 fixedModelDetails={{
                   parameter_size: runB.results?.ollama?.parameter_size,
                   quantization_level: runB.results?.ollama?.quantization_level,
-                  family: runB.results?.ollama?.family
+                  family: runB.results?.ollama?.family,
+                  model_size_bytes: runB.results?.ollama?.model_size_bytes,
+                  model_size_vram_bytes: runB.results?.ollama?.model_size_vram_bytes
                 }}
                 hideSelectors={true}
                 actualTps={runB.results?.ollama?.tokens_per_sec}

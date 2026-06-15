@@ -21,7 +21,8 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
   // Domyślny wybór modelu na starcie (preferujemy llama3 jeśli istnieje na liście)
   useEffect(() => {
     if (ollamaActive && models.length > 0 && !selectedModel) {
-      const defaultModel = models.find(m => m.includes("llama3")) || models[0];
+      const names = models.map(m => typeof m === "string" ? m : (m.name || ""));
+      const defaultModel = names.find(n => n.includes("llama3")) || names[0];
       setSelectedModel(defaultModel);
     }
   }, [ollamaActive, models, selectedModel]);
@@ -59,22 +60,29 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
         throw new Error(`Serwer zwrócił kod HTTP ${response.status}`);
       }
 
-      // Odczyt strumienia odpowiedzi HTTP
+      // Odczyt strumienia odpowiedzi HTTP za pomocą ReadableStream
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
 
+      // Pętla odpytująca strumień danych aż do jego wyczerpania
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
 
-        // Łączenie odebranego bufora z nowo zdekodowanymi danymi i podział na linie SSE
+        // Dekodujemy binarny chunk danych na tekst i dołączamy do bufora.
+        // Strumieniowane dane mogą być dzielone w losowych miejscach (np. w połowie znaku UTF-8 lub linii JSON),
+        // dlatego buforujemy je i dzielimy na pełne bloki wiadomości SSE oddzielone podwójnym znakiem nowej linii (\n\n).
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n\n");
-        buffer = lines.pop() || ""; // Pozostawienie ewentualnej niepełnej linii na koniec w buforze
+        
+        // Ostatnia pozycja po split() może być niepełną linią (chunk zakończył się przed kolejnym \n\n).
+        // Wyjmujemy ją ze splitowanej tablicy i zachowujemy w buforze na następny przebieg pętli.
+        buffer = lines.pop() || "";
 
         for (const line of lines) {
           const trimmed = line.trim();
+          // Ignorujemy puste linie oraz linie kontrolne SSE, które nie są właściwymi danymi payloadu (nie zaczynają się od "data: ")
           if (!trimmed || !trimmed.startsWith("data: ")) continue;
 
           try {
@@ -127,7 +135,7 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
           <div className="control-group">
             <span className="control-label">Wybrany test</span>
             <div style={{ fontSize: "14px", fontWeight: "600", color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
-              🤖 Test LLM Ollama
+              Test LLM Ollama
             </div>
             <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "4px" }}>
               Mierzy opóźnienie (TTFT) oraz prędkość generowania tokenów na sekundę.
@@ -145,11 +153,14 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
                 disabled={running}
                 onChange={(e) => setSelectedModel(e.target.value)}
               >
-                {models.map((model) => (
-                  <option key={model} value={model}>
-                    {model}
-                  </option>
-                ))}
+                {models.map((model) => {
+                  const name = typeof model === "string" ? model : (model.name || "Unknown");
+                  return (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  );
+                })}
               </select>
             </div>
           )}
@@ -400,7 +411,9 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
               fixedModelDetails={{
                 parameter_size: runResult.results.ollama.parameter_size,
                 quantization_level: runResult.results.ollama.quantization_level,
-                family: runResult.results.ollama.family
+                family: runResult.results.ollama.family,
+                model_size_bytes: runResult.results.ollama.model_size_bytes,
+                model_size_vram_bytes: runResult.results.ollama.model_size_vram_bytes
               }}
               hideSelectors={true}
               actualTps={runResult.results.ollama.tokens_per_sec}

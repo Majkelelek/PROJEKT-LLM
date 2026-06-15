@@ -18,59 +18,120 @@ export default function AIAnalyst({ currentRun }) {
     document.body.removeChild(element);
   };
 
-  // Bezpieczny, lekki parser składni Markdown (nagłówki, listy, paragrafy) oparty o wyrażenia regularne
+  // Bezpieczny, lekki parser składni Markdown (nagłówki, listy, paragrafy) przetwarzający tekst linia po linii
   const parseMarkdown = (markdown) => {
     if (!markdown) return null;
     
-    // Podział tekstu na bloki za pomocą podwójnych znaków nowej linii
-    const blocks = markdown.split(/\n\n+/);
-    
-    return blocks.map((block, idx) => {
-      const trimmedBlock = block.trim();
-      if (!trimmedBlock) return null;
+    // Normalizujemy końce linii i dzielimy treść na linie
+    const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+    const blocks = [];
+    let currentParagraphLines = [];
+    let currentList = null; // Przechowuje aktualnie budowaną listę: { type: 'ul' | 'ol', items: [] }
 
-      // Nagłówek H1: # Tytuł
-      if (trimmedBlock.startsWith("# ")) {
-        return <h1 key={idx}>{parseInlineMarkdown(trimmedBlock.replace(/^#\s+/, ""))}</h1>;
+    // Pomocnicza funkcja zatwierdzająca dotychczas nagromadzony akapit tekstu
+    const flushParagraph = (key) => {
+      if (currentParagraphLines.length > 0) {
+        blocks.push(
+          <p key={`p-${key}`}>
+            {parseInlineMarkdown(currentParagraphLines.join(" "))}
+          </p>
+        );
+        currentParagraphLines = [];
       }
-      // Nagłówek H2: ## Tytuł
-      if (trimmedBlock.startsWith("## ")) {
-        return <h2 key={idx}>{parseInlineMarkdown(trimmedBlock.replace(/^##\s+/, ""))}</h2>;
-      }
-      // Nagłówek H3: ### Tytuł
-      if (trimmedBlock.startsWith("### ")) {
-        return <h3 key={idx}>{parseInlineMarkdown(trimmedBlock.replace(/^###\s+/, ""))}</h3>;
-      }
-      
-      // Listy nienumerowane (wypunktowane): - Element lub * Element
-      if (trimmedBlock.startsWith("- ") || trimmedBlock.startsWith("* ")) {
-        const items = trimmedBlock.split(/\n[-*]\s+/);
-        items[0] = items[0].replace(/^[-*]\s+/, ""); // Oczyszczenie znacznika z pierwszego elementu
-        return (
-          <ul key={idx}>
-            {items.map((item, itemIdx) => (
-              <li key={itemIdx}>{parseInlineMarkdown(item)}</li>
+    };
+
+    // Pomocnicza funkcja zatwierdzająca dotychczas budowaną listę
+    const flushList = (key) => {
+      if (currentList) {
+        const ListTag = currentList.type;
+        blocks.push(
+          <ListTag key={`list-${key}`}>
+            {currentList.items.map((item, itemIdx) => (
+              <li key={itemIdx}>
+                {parseInlineMarkdown(item)}
+              </li>
             ))}
-          </ul>
+          </ListTag>
+        );
+        currentList = null;
+      }
+    };
+
+    // Zatwierdzenie wszystkich otwartych bloków
+    const flushAll = (key) => {
+      flushParagraph(key);
+      flushList(key);
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      // Pusta linia oznacza koniec bloku
+      if (trimmed === "") {
+        flushAll(i);
+        continue;
+      }
+
+      // 1. Nagłówki H1
+      if (trimmed.startsWith("# ")) {
+        flushAll(i);
+        blocks.push(
+          <h1 key={`h1-${i}`}>
+            {parseInlineMarkdown(trimmed.replace(/^#\s+/, ""))}
+          </h1>
         );
       }
-
-      // Listy numerowane: 1. Element
-      if (/^\d+\.\s+/.test(trimmedBlock)) {
-        const items = trimmedBlock.split(/\n\d+\.\s+/);
-        items[0] = items[0].replace(/^\d+\.\s+/, "");
-        return (
-          <ol key={idx}>
-            {items.map((item, itemIdx) => (
-              <li key={itemIdx}>{parseInlineMarkdown(item)}</li>
-            ))}
-          </ol>
+      // 2. Nagłówki H2
+      else if (trimmed.startsWith("## ")) {
+        flushAll(i);
+        blocks.push(
+          <h2 key={`h2-${i}`}>
+            {parseInlineMarkdown(trimmed.replace(/^##\s+/, ""))}
+          </h2>
         );
       }
+      // 3. Nagłówki H3
+      else if (trimmed.startsWith("### ")) {
+        flushAll(i);
+        blocks.push(
+          <h3 key={`h3-${i}`}>
+            {parseInlineMarkdown(trimmed.replace(/^###\s+/, ""))}
+          </h3>
+        );
+      } 
+      // 4. Elementy listy nienumerowanej (- lub *)
+      else if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+        flushParagraph(i);
+        const itemContent = trimmed.replace(/^[-*]\s+/, "");
+        if (currentList && currentList.type === "ul") {
+          currentList.items.push(itemContent);
+        } else {
+          flushList(i);
+          currentList = { type: "ul", items: [itemContent] };
+        }
+      } 
+      // 5. Elementy listy numerowanej (np. 1., 2.)
+      else if (/^\d+\.\s+/.test(trimmed)) {
+        flushParagraph(i);
+        const itemContent = trimmed.replace(/^\d+\.\s+/, "");
+        if (currentList && currentList.type === "ol") {
+          currentList.items.push(itemContent);
+        } else {
+          flushList(i);
+          currentList = { type: "ol", items: [itemContent] };
+        }
+      } 
+      // 6. Zwykłe linie tekstu (akapit)
+      else {
+        flushList(i);
+        currentParagraphLines.push(trimmed);
+      }
+    }
 
-      // Zwykły akapit tekstu
-      return <p key={idx}>{parseInlineMarkdown(trimmedBlock)}</p>;
-    });
+    // Wyczyszczenie i zapisanie pozostałości na końcu tekstu
+    flushAll(lines.length);
+    return blocks;
   };
 
   // Helper do procesowania stylów wewnątrzblokowych (pogrubienie **, kod `)
@@ -317,7 +378,9 @@ export default function AIAnalyst({ currentRun }) {
               fixedModelDetails={{
                 parameter_size: currentRun.results.ollama.parameter_size,
                 quantization_level: currentRun.results.ollama.quantization_level,
-                family: currentRun.results.ollama.family
+                family: currentRun.results.ollama.family,
+                model_size_bytes: currentRun.results.ollama.model_size_bytes,
+                model_size_vram_bytes: currentRun.results.ollama.model_size_vram_bytes
               }}
               hideSelectors={true}
               actualTps={currentRun.results.ollama.tokens_per_sec}

@@ -9,26 +9,39 @@ using ProjektAI.Backend.Models;
 
 namespace ProjektAI.Backend.Services
 {
-    // Usługa odpowiedzialna za zbieranie statycznych i dynamicznych informacji o systemie operacyjnym i sprzęcie.
+    /// <summary>
+    /// Usługa systemowa odpowiedzialna za niskopoziomową telemetrię i zbieranie metryk sprzętowych.
+    /// Integruje się z systemem operacyjnym Windows przy pomocy zapytań WMI (Windows Management Instrumentation),
+    /// rejestru systemowego oraz narzędzia CLI sterownika graficznego (nvidia-smi).
+    /// </summary>
     public class SystemInfoService
     {
         private readonly ILogger<SystemInfoService> _logger;
         private readonly SystemSpecs _cachedSpecs;
 
-        // Inicjalizacja usługi, pobranie i zapisanie w pamięci podręcznej (cache) statycznych parametrów sprzętowych
+        /// <summary>
+        /// Konstruktor inicjalizujący serwis telemetryczny. Pobiera jednorazowo statyczne parametry sprzętowe
+        /// (model procesora, pamięć RAM, specyfikację GPU) i zapisuje je w pamięci podręcznej (cache),
+        /// zapobiegając niepotrzebnemu obciążeniu systemu przy każdym zapytaniu.
+        /// </summary>
         public SystemInfoService(ILogger<SystemInfoService> logger)
         {
             _logger = logger;
             _cachedSpecs = LoadStaticSpecs();
         }
 
-        // Zwraca zapamiętane statyczne parametry sprzętowe
+        /// <summary>
+        /// Pobiera zapamiętaną, statyczną specyfikację podzespołów komputera.
+        /// </summary>
         public SystemSpecs GetStaticSpecs()
         {
             return _cachedSpecs;
         }
 
-        // Pobiera aktualne dynamiczne metryki systemowe (zużycie procesora i pamięci RAM)
+        /// <summary>
+        /// Pobiera dynamiczne, aktualne obciążenie systemu (zużycie pamięci RAM w GB/procentach oraz
+        /// procentowe obciążenie każdego logicznego rdzenia procesora w danej sekundzie).
+        /// </summary>
         public LiveMetrics GetDynamicMetrics()
         {
             var metrics = new LiveMetrics();
@@ -78,6 +91,21 @@ namespace ProjektAI.Backend.Services
                     
                     metrics.CpuPercentPerCore = perCore;
                 }
+
+                // 3. Pobieranie danych o karcie graficznej NVIDIA (VRAM)
+                try
+                {
+                    var gpuDict = GetNvidiaSmiAsync().GetAwaiter().GetResult();
+                    if (gpuDict != null && gpuDict.ContainsKey("vram_used_mb") && gpuDict.ContainsKey("vram_total_mb"))
+                    {
+                        metrics.GpuVramUsedMb = gpuDict["vram_used_mb"];
+                        metrics.GpuVramTotalMb = gpuDict["vram_total_mb"];
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("Nie udało się pobrać danych GPU w GetDynamicMetrics: {Message}", ex.Message);
+                }
             }
             catch (Exception ex)
             {
@@ -87,8 +115,14 @@ namespace ProjektAI.Backend.Services
             return metrics;
         }
 
-        // Próbkuje metryki GPU za pomocą narzędzia nvidia-smi (wymagana karta NVIDIA z zainstalowanymi sterownikami).
-        // Zwraca słownik z kluczami: vram_used_mb, vram_total_mb, gpu_util, power_draw, power_limit, temperature
+        /// <summary>
+        /// Cyklicznie próbkuje aktualne parametry fizyczne dedykowanej karty graficznej NVIDIA
+        /// poprzez wywołanie systemowego procesu narzędziowego `nvidia-smi` z odpowiednimi parametrami zapytania.
+        /// </summary>
+        /// <returns>
+        /// Słownik z kluczami reprezentującymi parametry GPU: vram_used_mb, vram_total_mb, gpu_util (obciążenie),
+        /// power_draw (pobór mocy), power_limit (limit mocy), temperature (temperatura rdzenia).
+        /// </returns>
         public async System.Threading.Tasks.Task<System.Collections.Generic.Dictionary<string, double>> GetNvidiaSmiAsync()
         {
             var result = new System.Collections.Generic.Dictionary<string, double>();
@@ -135,8 +169,13 @@ namespace ProjektAI.Backend.Services
             return result;
         }
 
-        // Pobiera szybką migawkę metryk systemowych (RAM, CPU) do zapisu razem z wynikami benchmarku.
-        // Uproszczona wersja GetDynamicMetrics zwracająca tylko dane istotne dla kontekstu benchmarku.
+        /// <summary>
+        /// Wykonuje natychmiastową, uproszczoną migawkę obciążenia systemu (CPU i RAM).
+        /// Używana do logowania stanu komputera tuż przed i tuż po zakończeniu testu wydajności.
+        /// </summary>
+        /// <returns>
+        /// Krotka zawierająca: zużyty RAM (GB), całkowity RAM (GB), procent zużycia RAM (%) oraz procent obciążenia CPU (%).
+        /// </returns>
         public (double ramUsedGb, double ramTotalGb, double ramPercent, double cpuPercent) GetSystemSnapshot()
         {
             double ramUsedGb = 0, ramTotalGb = 0, ramPercent = 0, cpuPercent = 0;

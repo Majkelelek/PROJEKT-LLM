@@ -109,6 +109,13 @@ namespace ProjektAI.Backend.Models
         [JsonPropertyName("family")]
         public string Family { get; set; } = string.Empty;
 
+        // Rzeczywisty rozmiar modelu w pamięci RAM/VRAM pobrany z /api/ps (w bajtach)
+        [JsonPropertyName("model_size_bytes")]
+        public long ModelSizeBytes { get; set; }
+
+        [JsonPropertyName("model_size_vram_bytes")]
+        public long ModelSizeVramBytes { get; set; }
+
         // Komunikat o błędzie (jeśli wystąpił podczas wykonywania testu)
         [JsonPropertyName("error")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
