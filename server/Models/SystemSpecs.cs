@@ -38,8 +38,5 @@ namespace ProjektAI.Backend.Models
         [JsonPropertyName("gpu_details")]
         public List<GpuDetail> GpuDetails { get; set; } = new();
 
-        // Informacja o platformie wykonawczej (w celach informacyjnych pozostawiona nazwa zmiennej python_version)
-        [JsonPropertyName("python_version")]
-        public string PythonVersion { get; set; } = ".NET 8.0 (ASP.NET Core)";
     }
 }

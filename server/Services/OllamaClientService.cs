@@ -158,7 +158,7 @@ namespace ProjektAI.Backend.Services
                     temp = 0.4;
                     break;
             }
-            
+
             var payload = new
             {
                 model = model,
@@ -172,18 +172,55 @@ namespace ProjektAI.Backend.Services
                 }
             };
 
-            // Próbkowanie metryk GPU i systemowych PRZED uruchomieniem wnioskowania
-            var gpuBefore = sysInfo != null ? await sysInfo.GetNvidiaSmiAsync() : new System.Collections.Generic.Dictionary<string, double>();
+            // Próbkowanie metryk systemowych (RAM/CPU) PRZED uruchomieniem wnioskowania
             var (ramBefore, _, _, _) = sysInfo != null ? sysInfo.GetSystemSnapshot() : (0, 0, 0, 0);
 
+            // Wartości szczytowe GPU zbierane w trakcie wnioskowania
+            double peakVramUsed = 0, peakVramTotal = 0, peakGpuUtil = 0;
+            double peakPowerDraw = 0, peakPowerLimit = 0, peakGpuTemp = 0;
+            bool gpuAvailable = false;
+
+            // Uruchamiamy pętlę próbkującą GPU w tle — zbiera wartości co 1.5s przez cały czas generowania
+            using var cts = new CancellationTokenSource();
+            var samplingTask = Task.Run(async () =>
+            {
+                if (sysInfo == null) return;
+                while (!cts.Token.IsCancellationRequested)
+                {
+                    var sample = await sysInfo.GetNvidiaSmiAsync();
+                    if (sample.Count > 0)
+                    {
+                        gpuAvailable = true;
+                        sample.TryGetValue("vram_used_mb", out double vUsed);
+                        sample.TryGetValue("vram_total_mb", out double vTotal);
+                        sample.TryGetValue("gpu_util", out double util);
+                        sample.TryGetValue("power_draw", out double power);
+                        sample.TryGetValue("power_limit", out double powerLim);
+                        sample.TryGetValue("temperature", out double temp2);
+
+                        if (vUsed    > peakVramUsed)   peakVramUsed   = vUsed;
+                        if (vTotal   > peakVramTotal)   peakVramTotal  = vTotal;
+                        if (util     > peakGpuUtil)     peakGpuUtil    = util;
+                        if (power    > peakPowerDraw)   peakPowerDraw  = power;
+                        if (powerLim > peakPowerLimit)  peakPowerLimit = powerLim;
+                        if (temp2    > peakGpuTemp)     peakGpuTemp    = temp2;
+                    }
+                    try { await Task.Delay(1500, cts.Token); }
+                    catch (TaskCanceledException) { break; }
+                }
+            }, cts.Token);
+
             var stopwatch = Stopwatch.StartNew();
-            
+
             _logger.LogInformation("Wysyłanie żądania benchmarku do Ollama dla modelu: {Model} (złożoność: {Complexity})", model, complexity);
             var response = await _httpClient.PostAsJsonAsync($"{OllamaBaseUrl}/api/generate", payload);
             stopwatch.Stop();
 
-            // Próbkowanie metryk GPU i systemowych PO zakończeniu wnioskowania
-            var gpuAfter = sysInfo != null ? await sysInfo.GetNvidiaSmiAsync() : new System.Collections.Generic.Dictionary<string, double>();
+            // Zatrzymujemy pętlę próbkującą po zakończeniu generowania
+            await cts.CancelAsync();
+            try { await samplingTask; } catch { /* ignorujemy TaskCanceledException */ }
+
+            // Pobieramy końcową migawkę RAM/CPU (po obciążeniu)
             var (ramAfterUsed, ramAfterTotal, ramAfterPct, cpuAfterPct) = sysInfo != null ? sysInfo.GetSystemSnapshot() : (0, 0, 0, 0);
 
             if (!response.IsSuccessStatusCode)
@@ -210,16 +247,7 @@ namespace ProjektAI.Backend.Services
             double evalDurationSec = data.EvalDuration / 1e9;
             double tokensPerSec = evalDurationSec > 0 ? data.EvalCount / evalDurationSec : 0;
             double promptEvalTokensPerSec = promptEvalDurationSec > 0 ? data.PromptEvalCount / promptEvalDurationSec : 0;
-
-            // Użyjemy wartości zmierzone PO teście (szczyt zużycia) jako bardziej reprezentatywnych
-            bool gpuAvailable = gpuAfter.Count > 0;
-            gpuAfter.TryGetValue("vram_used_mb", out double vramUsed);
-            gpuAfter.TryGetValue("vram_total_mb", out double vramTotal);
-            gpuAfter.TryGetValue("gpu_util", out double gpuUtil);
-            gpuAfter.TryGetValue("power_draw", out double powerDraw);
-            gpuAfter.TryGetValue("power_limit", out double powerLimit);
-            gpuAfter.TryGetValue("temperature", out double gpuTemp);
-
+            // Używamy wartości szczytowych zebranych w trakcie całego testu
             return new OllamaResult
             {
                 Model = model,
@@ -236,14 +264,14 @@ namespace ProjektAI.Backend.Services
                 EvalDurationSec = Math.Round(evalDurationSec, 2),
                 TokensPerSec = Math.Round(tokensPerSec, 2),
 
-                // Metryki GPU (nvidia-smi)
+                // Metryki GPU (nvidia-smi) — wartości szczytowe z całego okresu generowania
                 GpuMetricsAvailable = gpuAvailable,
-                GpuVramUsedMb = (long)vramUsed,
-                GpuVramTotalMb = (long)vramTotal,
-                GpuUtilPercent = Math.Round(gpuUtil, 1),
-                GpuPowerDrawW = Math.Round(powerDraw, 1),
-                GpuPowerLimitW = Math.Round(powerLimit, 1),
-                GpuTempC = Math.Round(gpuTemp, 1),
+                GpuVramUsedMb = (long)peakVramUsed,
+                GpuVramTotalMb = (long)peakVramTotal,
+                GpuUtilPercent = Math.Round(peakGpuUtil, 1),
+                GpuPowerDrawW = Math.Round(peakPowerDraw, 1),
+                GpuPowerLimitW = Math.Round(peakPowerLimit, 1),
+                GpuTempC = Math.Round(peakGpuTemp, 1),
 
                 // Metryki systemowe (WMI)
                 SysRamUsedGb = ramAfterUsed,
@@ -354,7 +382,6 @@ Przeanalizuj poniższe specyfikacje komputera oraz wyniki testu wydajności wnio
 - Procesor (CPU): {specs.CpuModel} ({specs.CpuCoresPhysical} rdzeni fizycznych, {specs.CpuCoresLogical} wątków logicznych)
 - Pamięć RAM: {specs.RamTotalGb} GB
 - Karta(y) graficzna(e): {gpusJoined}
-- Wersja platformy: {specs.PythonVersion}
 
 ### WYNIKI TESTU LLM
 - **Wnioskowanie LLM (Ollama - {testedModel})**:

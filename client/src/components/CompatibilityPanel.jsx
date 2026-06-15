@@ -20,111 +20,26 @@ const QUANTIZATIONS = [
   { id: "FP16", name: "16-bit (FP16)", multiplier: 2.05, overhead: 1.5, label: "Brak kompresji / Pełna precyzja (bardzo ciężki dla sprzętu)" }
 ];
 
-// Pomocnicza funkcja parsująca nazwę modelu z usługi Ollama na parametry rozmiaru i liczby warstw sieci neuronowej
 function parseOllamaModel(modelName, modelDetails = null) {
-  const name = modelName.toLowerCase();
-
   let sizeB = null;
   let layers = null;
-  let displayName = null;
+  let displayName = "Brak informacji";
 
-  // 1. Jeśli przekazano bezpośrednio szczegóły z Ollamy (mechanizm dynamiczny), używamy ich!
-  if (modelDetails && modelDetails.parameter_size) {
-    const pSizeStr = modelDetails.parameter_size.toLowerCase();
-    const match = pSizeStr.match(/(\d+(?:\.\d+)?)/);
-    if (match) {
-      sizeB = parseFloat(match[1]);
-      
-      const estimateLayers = (size) => {
-        if (size <= 2) return 24;
-        if (size <= 4) return 28;
-        if (size <= 9) return 32;
-        if (size <= 15) return 40;
-        if (size <= 35) return 64;
-        if (size <= 75) return 80;
-        return 96;
-      };
-      
-      // Wyjątki dla popularnych rodzin, jeśli rodzina jest znana z tagów
-      const family = (modelDetails.family || "").toLowerCase();
-      if (family.includes("llama")) {
-        if (Math.abs(sizeB - 1.0) < 0.5) layers = 16;
-        else if (Math.abs(sizeB - 3.0) < 0.5) layers = 28;
-        else if (Math.abs(sizeB - 8.0) < 1.0) layers = 32;
-        else if (Math.abs(sizeB - 70.0) < 5.0) layers = 80;
+  // Używamy wyłącznie surowych danych pobranych z systemu (z obiektu modelDetails)
+  if (modelDetails) {
+    // 1. Rozmiar parametrów bezpośrednio z systemu
+    if (modelDetails.parameter_size) {
+      const match = modelDetails.parameter_size.match(/(\d+(?:\.\d+)?)/);
+      if (match) {
+        sizeB = parseFloat(match[1]);
       }
-      
-      if (!layers) {
-        layers = estimateLayers(sizeB);
-      }
-      
+    }
+
+    // 2. Nazwa wyświetlana na podstawie surowych danych
+    if (sizeB !== null) {
       const cleanName = modelName.split(":")[0];
       const capitalized = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
-      displayName = `${capitalized} (${modelDetails.parameter_size})`;
-    }
-  }
-
-  // 2. Jeśli nie mamy szczegółowych danych z API, przechodzimy do dopasowania heurystycznego
-  if (sizeB === null) {
-    if (name.includes("1.5b")) {
-      sizeB = 1.5;
-      layers = 16;
-      displayName = `Llama / DeepSeek (1.5B)`;
-    } else if (name.includes("1b")) {
-      sizeB = 1.0;
-      layers = 16;
-      displayName = `Llama 3.2 (1B)`;
-    } else if (name.includes("3b") || name.includes("3.2")) {
-      sizeB = 3.2;
-      layers = 28;
-      displayName = `Llama 3.2 (3B)`;
-    } else if (name.includes("8b") || name.includes("3.1") || name.includes("3.3") || name.includes("llama3")) {
-      sizeB = 8.0;
-      layers = 32;
-      displayName = `Llama 3.1 / 3.3 (8B)`;
-    } else if (name.includes("14b") || name.includes("phi4") || name.includes("phi-4")) {
-      sizeB = 14.0;
-      layers = 40;
-      displayName = `Phi-4 / DeepSeek (14B)`;
-    } else if (name.includes("32b") || name.includes("32")) {
-      sizeB = 32.5;
-      layers = 64;
-      displayName = `Qwen 2.5 (32B)`;
-    } else if (name.includes("70b") || name.includes("llama3.3") || name.includes("llama-3.3")) {
-      sizeB = 70.0;
-      layers = 80;
-      displayName = `Llama 3.1 (70B)`;
-    } else if (name.includes("671b") || name.includes("r1")) {
-      sizeB = 671.0;
-      layers = 60;
-      displayName = `DeepSeek R1 (671B)`;
-    }
-  }
-
-  // 3. Ostateczny fallback w oparciu o regex z samej nazwy (szukamy liczby przed literą "b" np. "7b")
-  if (sizeB === null) {
-    const estimateLayers = (size) => {
-      if (size <= 2) return 24;
-      if (size <= 4) return 28;
-      if (size <= 9) return 32;
-      if (size <= 15) return 40;
-      if (size <= 35) return 64;
-      if (size <= 75) return 80;
-      return 96;
-    };
-
-    const bMatch = name.match(/(\d+(?:\.\d+)?)\s*b/);
-    if (bMatch) {
-      sizeB = parseFloat(bMatch[1]);
-      layers = estimateLayers(sizeB);
-      const cleanName = modelName.split(":")[0];
-      const capitalized = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
-      displayName = `${capitalized} (${sizeB}B)`;
-    } else {
-      // Domyślna wartość w przypadku braku jakichkolwiek liczb z "b"
-      sizeB = 8.0;
-      layers = 32;
-      displayName = modelName;
+      displayName = `${capitalized} (${modelDetails.parameter_size || `${sizeB}B`})`;
     }
   }
 
@@ -150,139 +65,93 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, fixed
       description: `Model przetestowany w tym uruchomieniu: ${fixedModelName}`
     };
 
-    // Spróbujmy znaleźć rzeczywistą kwantyzację z testu
+    // Dopasowujemy kwantyzację wyłącznie do jednej z predefiniowanych, znanych wartości
     if (fixedModelDetails && fixedModelDetails.quantization_level) {
       const qLevel = fixedModelDetails.quantization_level.toUpperCase();
       const matchedQuant = QUANTIZATIONS.find(q => qLevel.includes(q.id.toUpperCase()) || q.id.toUpperCase().includes(qLevel));
       if (matchedQuant) {
         quant = matchedQuant;
       } else {
-        // Estymowanie parametrów dla niestandardowych kwantyzacji
-        let multiplier = 0.62;
-        let overhead = 0.6;
-        if (qLevel.includes("Q2")) { multiplier = 0.4; overhead = 0.4; }
-        else if (qLevel.includes("Q3")) { multiplier = 0.5; overhead = 0.5; }
-        else if (qLevel.includes("Q5")) { multiplier = 0.75; overhead = 0.7; }
-        else if (qLevel.includes("Q6")) { multiplier = 0.85; overhead = 0.75; }
-        else if (qLevel.includes("Q8")) { multiplier = 1.02; overhead = 0.8; }
-        else if (qLevel.includes("FP16") || qLevel.includes("F16")) { multiplier = 2.05; overhead = 1.5; }
-        else if (qLevel.includes("FP32") || qLevel.includes("F32")) { multiplier = 4.1; overhead = 2.0; }
-        
-        quant = {
-          id: qLevel,
-          name: qLevel,
-          multiplier: multiplier,
-          overhead: overhead,
-          label: `Wykryta kwantyzacja: ${qLevel}`
-        };
+        // Kwantyzacja nieznana — nie szacujemy, tylko oznaczamy jako brak danych
+        quant = null;
       }
     } else {
-      quant = QUANTIZATIONS[0];
+      quant = null;
     }
   } else {
     model = PREDEFINED_MODELS.find(m => m.id === selectedModelId) || PREDEFINED_MODELS[0];
   }
 
-  // 1. Ustalanie parametrów kart graficznych (VRAM)
-  let gpus = specs?.gpu_details || [];
-  if ((!gpus || gpus.length === 0) && specs?.gpus && specs.gpus.length > 0) {
-    gpus = specs.gpus.map(gpuName => ({
-      name: gpuName,
-      vram_gb: 0.0 // jeśli brak szczegółów w historii, oznaczamy jako brak danych (0.0)
-    }));
-  }
+  // 1. Ustalanie parametrów kart graficznych (VRAM) wyłącznie z danych systemowych
+  const gpus = specs?.gpu_details || [];
 
   // Wybieramy kartę z największą ilością pamięci VRAM jako kartę główną pod obliczenia LLM
   const activeGpu = gpus.reduce((best, curr) => {
     return curr.vram_gb > best.vram_gb ? curr : best;
-  }, { name: "Zintegrowana / Brak dedykowanej", vram_gb: 0.0 });
+  }, { name: "Brak danych", vram_gb: 0.0 });
 
-  const totalRam = specs?.ram_total_gb || 8.0;
-  const cpuCores = specs?.cpu_cores_physical || 4;
+  const totalRam = specs?.ram_total_gb ?? null;
+  const cpuCores = specs?.cpu_cores_physical ?? null;
+
+  const hasInfo = model.sizeB !== null && quant !== null;
+  // Liczba warstw jest znana tylko jeśli model ma dane systemowe (layers != null)
+  const hasLayers = model.layers !== null;
 
   // 2. Obliczenia podziału warstw modelu i zapotrzebowania na pamięć
-  // Obliczenie szacowanego zapotrzebowania na pamięć RAM/VRAM dla modelu z wybraną kwantyzacją
-  const requiredMemory = Math.round((model.sizeB * quant.multiplier + quant.overhead) * 10) / 10;
+  const requiredMemory = hasInfo ? Math.round((model.sizeB * quant.multiplier + quant.overhead) * 10) / 10 : null;
 
   // Rezerwujemy 0.7 GB pamięci VRAM na obsługę systemu operacyjnego i pulpitu
   const vramAvailable = Math.max(0, activeGpu.vram_gb - 0.7);
-  const numLayers = model.layers;
-  const memoryPerLayer = requiredMemory / numLayers;
+  const numLayers = hasLayers ? model.layers : null;
+  const memoryPerLayer = (hasInfo && hasLayers && numLayers > 0) ? requiredMemory / numLayers : null;
 
   // Liczymy ile warstw modelu zmieści się bezpośrednio w szybkiej pamięci VRAM
   let layersInVram = 0;
-  if (vramAvailable > 0) {
+  if (hasInfo && hasLayers && memoryPerLayer > 0 && vramAvailable > 0) {
     layersInVram = Math.floor(vramAvailable / memoryPerLayer);
     if (layersInVram > numLayers) layersInVram = numLayers;
   }
 
   // Pozostałe warstwy będą zrzucone do pamięci RAM
-  const layersInRam = numLayers - layersInVram;
-  const ramRequired = layersInRam * memoryPerLayer;
+  const layersInRam = hasLayers ? numLayers - layersInVram : null;
+  const ramRequired = (hasInfo && hasLayers && memoryPerLayer !== null) ? layersInRam * memoryPerLayer : null;
 
   // Rezerwujemy 4.5 GB pamięci systemowej RAM na system Windows i inne procesy użytkownika
-  const ramAvailableForModel = Math.max(0, totalRam - 4.5);
-  const fitsInRam = ramRequired <= ramAvailableForModel;
+  const ramAvailableForModel = totalRam !== null ? Math.max(0, totalRam - 4.5) : null;
+  const fitsInRam = (ramRequired !== null && ramAvailableForModel !== null) ? ramRequired <= ramAvailableForModel : null;
 
   // Jeśli pozostałe warstwy nie mieszczą się w RAMie, następuje zrzucenie do pliku wymiany (swap na dysku)
   let layersInSwap = 0;
-  if (!fitsInRam && ramAvailableForModel > 0) {
-    const memoryFitsInRam = ramAvailableForModel;
-    const layersThatFitInRam = Math.floor(memoryFitsInRam / memoryPerLayer);
-    layersInSwap = numLayers - layersInVram - layersThatFitInRam;
-  } else if (!fitsInRam) {
-    layersInSwap = numLayers - layersInVram;
+  if (hasInfo && hasLayers && fitsInRam === false && memoryPerLayer !== null) {
+    if (ramAvailableForModel > 0) {
+      const layersThatFitInRam = Math.floor(ramAvailableForModel / memoryPerLayer);
+      layersInSwap = numLayers - layersInVram - layersThatFitInRam;
+    } else {
+      layersInSwap = numLayers - layersInVram;
+    }
+    if (layersInSwap < 0) layersInSwap = 0;
   }
-  if (layersInSwap < 0) layersInSwap = 0;
 
-  const layersInRamActual = numLayers - layersInVram - layersInSwap;
+  const layersInRamActual = (hasInfo && hasLayers) ? numLayers - layersInVram - layersInSwap : null;
 
   // Obliczanie procentowego wskaźnika zgodności sprzętowej (Compatibility Score)
-  let compatibilityScore;
-  if (requiredMemory <= activeGpu.vram_gb) {
-    // Model mieści się w całości w pamięci VRAM karty graficznej
-    compatibilityScore = 100;
-  } else if (requiredMemory <= (activeGpu.vram_gb + ramAvailableForModel)) {
-    // Model mieści się w trybie hybrydowym (częściowo VRAM, częściowo RAM)
-    const vramRatio = activeGpu.vram_gb / requiredMemory;
-    compatibilityScore = Math.round(45 + vramRatio * 45); // Zakres 45% - 90%
-  } else {
-    // Model przekracza fizyczną pamięć, nastąpi zrzucanie na wolny dysk (swap)
-    const totalAvailable = activeGpu.vram_gb + ramAvailableForModel;
-    const ratio = totalAvailable / requiredMemory;
-    compatibilityScore = Math.round(Math.max(10, ratio * 40)); // Zakres 10% - 40%
+  // Wymaga: rozmiaru modelu (hasInfo) + danych RAM z systemu
+  let compatibilityScore = null;
+  if (hasInfo && totalRam !== null) {
+    if (requiredMemory <= activeGpu.vram_gb) {
+      compatibilityScore = 100;
+    } else if (ramAvailableForModel !== null && requiredMemory <= (activeGpu.vram_gb + ramAvailableForModel)) {
+      const vramRatio = activeGpu.vram_gb / requiredMemory;
+      compatibilityScore = Math.round(45 + vramRatio * 45); // Zakres 45% - 90%
+    } else if (ramAvailableForModel !== null) {
+      const totalAvailable = activeGpu.vram_gb + ramAvailableForModel;
+      const ratio = totalAvailable / requiredMemory;
+      compatibilityScore = Math.round(Math.max(10, ratio * 40)); // Zakres 10% - 40%
+    }
   }
 
-  // 3. Prognozowanie szybkości generowania tekstu (Tokeny na sekundę)
-  // Klasa wydajności GPU obliczana na podstawie faktycznego VRAM odczytanego z systemu (bez zgadywania nazw)
-  let gpuPower = 35; // Wartość bazowa dla układów zintegrowanych i biurowych
-  if (activeGpu.vram_gb >= 2.0) {
-    // Wydajność skaluje się z klasą karty powiązaną z pojemnością pamięci VRAM (np. 4GB = 66, 8GB = 132, 12GB = 198, 24GB = 396)
-    gpuPower = Math.round(activeGpu.vram_gb * 16.5);
-  }
-
-  const gpuTps = gpuPower / (model.sizeB * 1.1);
-  const cpuTps = (cpuCores * 1.5) / (model.sizeB * 0.9 + 0.5);
-
-  let estTps;
-  if (layersInVram === numLayers) {
-    estTps = gpuTps;
-  } else if (layersInVram === 0) {
-    estTps = cpuTps;
-  } else {
-    // Średnia ważona dla trybu hybrydowego
-    const vramPct = layersInVram / numLayers;
-    estTps = (gpuTps * vramPct) + (cpuTps * (1 - vramPct));
-  }
-
-  // Drastyczny spadek wydajności w przypadku korzystania z pamięci wirtualnej swap na dysku
-  if (layersInSwap > 0) {
-    const swapRatio = layersInSwap / numLayers;
-    estTps = estTps * (1 - swapRatio * 0.95);
-  }
-
-  estTps = Math.round(Math.max(0.2, estTps) * 10) / 10;
-  const displayTps = actualTps !== null ? actualTps : estTps;
+  // Prędkość — wyłącznie rzeczywiste zmierzone dane, bez żadnego szacowania
+  const displayTps = actualTps !== null ? actualTps : null;
 
   // Ustalenie statusu dopasowania oraz tekstu werdyktu w języku polskim
   let statusText;
@@ -290,7 +159,12 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, fixed
   let statusBg;
   let verdictMessage;
 
-  if (compatibilityScore >= 90) {
+  if (!hasInfo) {
+    statusText = "Brak informacji";
+    statusColor = "var(--text-muted)";
+    statusBg = "rgba(255, 255, 255, 0.05)";
+    verdictMessage = "Brak szczegółowych danych technicznych o testowanym modelu LLM w systemie (rozmiar parametrów lub liczba warstw sieci jest nieznana). Nie można przeprowadzić symulacji alokacji sprzętowej.";
+  } else if (compatibilityScore >= 90) {
     statusText = "Znakomita";
     statusColor = "var(--accent-green)";
     statusBg = "rgba(0, 230, 118, 0.1)";
@@ -315,7 +189,7 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, fixed
   // Parametry wskaźnika okrągłego SVG
   const radius = 65;
   const circumference = 2 * Math.PI * radius;
-  const strokeDashoffset = circumference - (compatibilityScore / 100) * circumference;
+  const strokeDashoffset = hasInfo ? circumference - (compatibilityScore / 100) * circumference : circumference;
 
   return (
     <div className="animate-fade-in" style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
@@ -408,7 +282,7 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, fixed
               {fixedModelName}
             </div>
             <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "2px" }}>
-              Rozmiar: {model.sizeB}B parametrów | Szacowane warstwy sieci: {model.layers}
+              {model.sizeB !== null ? `Rozmiar: ${model.sizeB}B parametrów` : "Brak danych systemowych o rozmiarze modelu"}
             </div>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", background: "rgba(0,0,0,0.15)", padding: "12px 16px", borderRadius: "8px", border: "1px solid var(--border-color)" }}>
@@ -456,7 +330,7 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, fixed
             </svg>
             <div style={{ position: "absolute", display: "flex", flexDirection: "column", alignItems: "center" }}>
               <span style={{ fontSize: "36px", fontWeight: "900", fontFamily: "var(--font-mono)", color: statusColor }}>
-                {compatibilityScore}%
+                {hasInfo ? `${compatibilityScore}%` : "--%"}
               </span>
               <span style={{ fontSize: "11px", textTransform: "uppercase", color: "var(--text-muted)", fontWeight: "bold" }}>
                 Zgodności
@@ -507,62 +381,83 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, fixed
                 paddingRight: "4px"
               }}
             >
-              {Array.from({ length: numLayers }).map((_, idx) => {
-                let cellColor = "rgba(255, 23, 68, 0.25)"; // Swap (Czerwony)
-                let cellBorder = "rgba(255, 23, 68, 0.4)";
-                let titleStr = "Swap / Paging (Dysk)";
+              {hasInfo ? (
+                Array.from({ length: numLayers }).map((_, idx) => {
+                  let cellColor = "rgba(255, 23, 68, 0.25)"; // Swap (Czerwony)
+                  let cellBorder = "rgba(255, 23, 68, 0.4)";
+                  let titleStr = "Swap / Paging (Dysk)";
 
-                if (idx < layersInVram) {
-                  cellColor = "rgba(0, 229, 255, 0.25)"; // VRAM (Błękitny)
-                  cellBorder = "rgba(0, 229, 255, 0.6)";
-                  titleStr = "Pamięć VRAM (Karta GPU)";
-                } else if (idx < (layersInVram + layersInRamActual)) {
-                  cellColor = "rgba(213, 0, 249, 0.25)"; // RAM (Fioletowy)
-                  cellBorder = "rgba(213, 0, 249, 0.6)";
-                  titleStr = "Pamięć operacyjna RAM";
-                }
+                  if (idx < layersInVram) {
+                    cellColor = "rgba(0, 229, 255, 0.25)"; // VRAM (Błękitny)
+                    cellBorder = "rgba(0, 229, 255, 0.6)";
+                    titleStr = "Pamięć VRAM (Karta GPU)";
+                  } else if (idx < (layersInVram + layersInRamActual)) {
+                    cellColor = "rgba(213, 0, 249, 0.25)"; // RAM (Fioletowy)
+                    cellBorder = "rgba(213, 0, 249, 0.6)";
+                    titleStr = "Pamięć operacyjna RAM";
+                  }
 
-                return (
-                  <div
-                    key={idx}
-                    className="compat-layer-cell"
-                    title={`Warstwa ${idx + 1}/${numLayers}: ${titleStr}`}
-                    style={{
-                      aspectRatio: "1",
-                      borderRadius: "4px",
-                      backgroundColor: cellColor,
-                      border: `1px solid ${cellBorder}`,
-                      color: cellBorder.replace("0.4", "1.0").replace("0.6", "1.0")
-                    }}
-                  />
-                );
-              })}
+                  return (
+                    <div
+                      key={idx}
+                      className="compat-layer-cell"
+                      title={`Warstwa ${idx + 1}/${numLayers}: ${titleStr}`}
+                      style={{
+                        aspectRatio: "1",
+                        borderRadius: "4px",
+                        backgroundColor: cellColor,
+                        border: `1px solid ${cellBorder}`,
+                        color: cellBorder.replace("0.4", "1.0").replace("0.6", "1.0")
+                      }}
+                    />
+                  );
+                })
+              ) : (
+                <div style={{ gridColumn: "1 / -1", textAlign: "center", color: "var(--text-muted)", padding: "20px 0", fontSize: "13px" }}>
+                  Brak informacji o strukturze warstw modelu
+                </div>
+              )}
             </div>
 
             {/* Legenda siatki offloadingu */}
             <div style={{ display: "flex", flexWrap: "wrap", gap: "16px", marginTop: "16px", fontSize: "11px", borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: "12px" }}>
-              <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                <span style={{ width: "10px", height: "10px", borderRadius: "2px", background: "rgba(0, 229, 255, 0.25)", border: "1px solid var(--accent-cyan)" }}></span>
-                <span>VRAM GPU ({layersInVram} warstw)</span>
-              </span>
-              <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                <span style={{ width: "10px", height: "10px", borderRadius: "2px", background: "rgba(213, 0, 249, 0.25)", border: "1px solid var(--accent-purple)" }}></span>
-                <span>RAM Systemowy ({layersInRamActual} warstw)</span>
-              </span>
-              {layersInSwap > 0 && (
-                <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                  <span style={{ width: "10px", height: "10px", borderRadius: "2px", background: "rgba(255, 23, 68, 0.25)", border: "1px solid var(--accent-red)" }}></span>
-                  <span style={{ color: "var(--accent-red)", fontWeight: "bold" }}>Spill / Swap ({layersInSwap} warstw) ⚠️</span>
-                </span>
+              {hasInfo ? (
+                <>
+                  <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ width: "10px", height: "10px", borderRadius: "2px", background: "rgba(0, 229, 255, 0.25)", border: "1px solid var(--accent-cyan)" }}></span>
+                    <span>VRAM GPU ({layersInVram} warstw)</span>
+                  </span>
+                  <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ width: "10px", height: "10px", borderRadius: "2px", background: "rgba(213, 0, 249, 0.25)", border: "1px solid var(--accent-purple)" }}></span>
+                    <span>RAM Systemowy ({layersInRamActual !== null ? layersInRamActual : "?"} warstw)</span>
+                  </span>
+                  {layersInSwap > 0 && (
+                    <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <span style={{ width: "10px", height: "10px", borderRadius: "2px", background: "rgba(255, 23, 68, 0.25)", border: "1px solid var(--accent-red)" }}></span>
+                      <span style={{ color: "var(--accent-red)", fontWeight: "bold" }}>Spill / Swap ({layersInSwap} warstw) ⚠️</span>
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span style={{ color: "var(--text-muted)" }}>Brak danych telemetrycznych o podziale pamięci</span>
               )}
             </div>
           </div>
 
-          <div style={{ fontSize: "12px", color: "var(--text-secondary)", lineHeight: "1.4" }}>
-            Szacowany rozmiar modelu w pamięci: <strong style={{ color: "#fff" }}>{requiredMemory} GB</strong>.
-            Twoja wolna pamięć VRAM: <strong style={{ color: "var(--accent-cyan)" }}>{vramAvailable.toFixed(1)} GB</strong>.
-            Wymagany RAM dla reszty warstw: <strong style={{ color: "var(--accent-purple)" }}>{ramRequired.toFixed(1)} GB</strong> (dostępne ok. {ramAvailableForModel.toFixed(1)} GB).
-          </div>
+          {hasInfo ? (
+            <div style={{ fontSize: "12px", color: "var(--text-secondary)", lineHeight: "1.4" }}>
+              Rozmiar modelu w pamięci: <strong style={{ color: "#fff" }}>{requiredMemory} GB</strong>.
+              Wolna pamięć VRAM: <strong style={{ color: "var(--accent-cyan)" }}>{vramAvailable.toFixed(1)} GB</strong>.
+              {ramRequired !== null && ramAvailableForModel !== null && (
+                <> Wymagany RAM dla reszty warstw: <strong style={{ color: "var(--accent-purple)" }}>{ramRequired.toFixed(1)} GB</strong> (dostępne ok. {ramAvailableForModel.toFixed(1)} GB).</>
+              )}
+            </div>
+          ) : (
+            <div style={{ fontSize: "12px", color: "var(--text-secondary)", lineHeight: "1.4" }}>
+              Wolna pamięć VRAM: <strong style={{ color: "var(--accent-cyan)" }}>{vramAvailable.toFixed(1)} GB</strong>.
+              Dostępna pamięć RAM: <strong style={{ color: "var(--accent-purple)" }}>{totalRam !== null ? `${totalRam} GB` : "Brak danych"}</strong>.
+            </div>
+          )}
         </div>
       </div>
 
@@ -584,7 +479,9 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, fixed
                 </div>
               </div>
               <div style={{ display: "flex", alignItems: "center" }}>
-                {layersInVram === numLayers ? (
+                {!hasInfo ? (
+                  <span style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: "bold", background: "rgba(255,255,255,0.05)", padding: "4px 8px", borderRadius: "4px" }}>Brak informacji</span>
+                ) : layersInVram === numLayers ? (
                   <span style={{ fontSize: "12px", color: "var(--accent-green)", fontWeight: "bold", background: "rgba(0,230,118,0.1)", padding: "4px 8px", borderRadius: "4px" }}>✓ Znakomicie</span>
                 ) : layersInVram > 0 ? (
                   <span style={{ fontSize: "12px", color: "var(--accent-cyan)", fontWeight: "bold", background: "rgba(0,229,255,0.1)", padding: "4px 8px", borderRadius: "4px" }}>⇅ Offload ({layersInVram}/{numLayers})</span>
@@ -600,11 +497,13 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, fixed
                 <span style={{ fontSize: "18px" }}>🧠</span>
                 <div>
                   <div style={{ fontSize: "13px", fontWeight: "700" }}>Pamięć RAM systemu</div>
-                  <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>Posiadasz {totalRam} GB RAM</div>
+                  <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>Posiadasz {totalRam !== null ? `${totalRam} GB` : "Brak danych"} RAM</div>
                 </div>
               </div>
               <div style={{ display: "flex", alignItems: "center" }}>
-                {requiredMemory <= totalRam ? (
+                {!hasInfo || totalRam === null ? (
+                  <span style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: "bold", background: "rgba(255,255,255,0.05)", padding: "4px 8px", borderRadius: "4px" }}>Brak informacji</span>
+                ) : requiredMemory <= totalRam ? (
                   <span style={{ fontSize: "12px", color: "var(--accent-green)", fontWeight: "bold", background: "rgba(0,230,118,0.1)", padding: "4px 8px", borderRadius: "4px" }}>✓ Wystarczająco</span>
                 ) : (
                   <span style={{ fontSize: "12px", color: "var(--accent-red)", fontWeight: "bold", background: "rgba(255,23,68,0.1)", padding: "4px 8px", borderRadius: "4px" }}>⚠️ Za mało RAM-u (OOM)</span>
@@ -618,11 +517,13 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, fixed
                 <span style={{ fontSize: "18px" }}>⚙️</span>
                 <div>
                   <div style={{ fontSize: "13px", fontWeight: "700" }}>Moc obliczeniowa CPU</div>
-                  <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>Wykryto {cpuCores} fizycznych rdzeni</div>
+                  <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>Wykryto {cpuCores !== null ? `${cpuCores} fizycznych rdzeni` : "Brak danych"}</div>
                 </div>
               </div>
               <div style={{ display: "flex", alignItems: "center" }}>
-                {cpuCores >= 8 ? (
+                {cpuCores === null ? (
+                  <span style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: "bold", background: "rgba(255,255,255,0.05)", padding: "4px 8px", borderRadius: "4px" }}>Brak informacji</span>
+                ) : cpuCores >= 8 ? (
                   <span style={{ fontSize: "12px", color: "var(--accent-green)", fontWeight: "bold", background: "rgba(0,230,118,0.1)", padding: "4px 8px", borderRadius: "4px" }}>✓ Wysoka wydajność</span>
                 ) : cpuCores >= 6 ? (
                   <span style={{ fontSize: "12px", color: "var(--accent-cyan)", fontWeight: "bold", background: "rgba(0,229,255,0.1)", padding: "4px 8px", borderRadius: "4px" }}>✓ Dobre dopasowanie</span>
@@ -638,7 +539,7 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, fixed
         {/* Prognoza/Pomiar prędkości (t/s) w odniesieniu do średniej prędkości czytania */}
         <div className="glass-panel" style={{ padding: "24px", display: "flex", flexDirection: "column", justifyItems: "stretch", gap: "16px" }}>
           <h3 style={{ fontSize: "16px", fontWeight: "700" }}>
-            {actualTps !== null ? "Rzeczywista szybkość generowania" : "Prognozowana szybkość generowania"}
+            {actualTps !== null ? "Rzeczywista szybkość generowania" : "Szybkość generowania"}
           </h3>
 
           <div style={{ display: "flex", flexDirection: "column", gap: "12px", flexGrow: 1, justifyContent: "center" }}>
@@ -648,16 +549,16 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, fixed
                   fontSize: "48px",
                   fontWeight: "900",
                   fontFamily: "var(--font-mono)",
-                  color: displayTps > 15 ? "var(--accent-green)" : displayTps > 7 ? "var(--accent-cyan)" : displayTps > 3 ? "var(--accent-amber)" : "var(--accent-red)"
+                  color: displayTps === null ? "var(--text-muted)" : displayTps > 15 ? "var(--accent-green)" : displayTps > 7 ? "var(--accent-cyan)" : displayTps > 3 ? "var(--accent-amber)" : "var(--accent-red)"
                 }}
               >
-                {displayTps}
+                {displayTps !== null ? displayTps : "--"}
               </span>
               <span style={{ fontSize: "16px", fontWeight: "700", color: "var(--text-secondary)" }}>t/s</span>
             </div>
 
             <div style={{ textAlign: "center", fontSize: "13px", color: "var(--text-muted)" }}>
-              {actualTps !== null ? "Prędkość wnioskowania zmierzona podczas testu." : "Szacowana prędkość wnioskowania (Tokeny na sekundę)."}
+              {actualTps !== null ? "Prędkość wnioskowania zmierzona podczas testu." : "Brak zmierzonej prędkości — uruchom test aby uzyskać dane."}
             </div>
 
             {/* Porównanie z tempem czytania człowieka */}
@@ -670,10 +571,10 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, fixed
                 <span>Status generowania:</span>
                 <strong
                   style={{
-                    color: displayTps >= 15 ? "var(--accent-green)" : displayTps >= 7 ? "var(--accent-cyan)" : displayTps >= 3 ? "var(--accent-amber)" : "var(--accent-red)"
+                    color: displayTps === null ? "var(--text-muted)" : displayTps >= 15 ? "var(--accent-green)" : displayTps >= 7 ? "var(--accent-cyan)" : displayTps >= 3 ? "var(--accent-amber)" : "var(--accent-red)"
                   }}
                 >
-                  {displayTps >= 15 ? "Błyskawiczne" : displayTps >= 7 ? "Płynne czytanie" : displayTps >= 3 ? "Powolne" : "Uciążliwie wolne"}
+                  {displayTps === null ? "Brak informacji" : displayTps >= 15 ? "Błyskawiczne" : displayTps >= 7 ? "Płynne czytanie" : displayTps >= 3 ? "Powolne" : "Uciążliwie wolne"}
                 </strong>
               </div>
             </div>

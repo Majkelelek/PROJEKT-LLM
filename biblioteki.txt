@@ -189,8 +189,7 @@ Logi zapisywane są jako tablica obiektów JSON. Każdy pojedynczy rekord odpowi
         "vram_mb": 4096.0,
         "is_nvidia": true
       }
-    ],
-    "python_version": ".NET 8.0 (ASP.NET Core)"
+    ]
   },
   "results": {
     "ollama": {

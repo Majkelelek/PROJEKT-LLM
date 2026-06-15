@@ -105,7 +105,7 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
           <div className="spec-icon">⚙️</div>
           <div className="spec-label">System operacyjny</div>
           <div className="spec-value">{specs?.os || "Ładowanie szczegółów systemu..."}</div>
-          <div className="spec-sub">Wersja platformy: {specs?.python_version}</div>
+          <div className="spec-sub">Środowisko systemowe</div>
         </div>
       </div>
 

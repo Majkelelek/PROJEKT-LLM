@@ -52,8 +52,9 @@ Zakres prac projektowych i implementacyjnych obejmował:
    telemetrycznych bezpośrednio z systemu operacyjnego, zarządzanie lokalną instancją
    silnika LLM oraz orkiestrację procesu wykonywania testów.
 3. Integrację z lokalnym silnikiem uruchomieniowym Ollama i sterownikami kart graficznych.
-4. Opracowanie fizyczno-sprzętowego modelu matematycznego do szacowania prędkości 
-   wnioskowania (TPS) w zależności od specyfikacji karty graficznej i rozmiaru modelu.
+4. Opracowanie modułu wizualizacji zgodności sprzętowej, prezentującego dane o alokacji
+   pamięci (VRAM/RAM) modelu wyłącznie na podstawie rzeczywistych metadanych modelu
+   pobieranych na żywo z silnika Ollama (rozmiar parametrów, rodzina, kwantyzacja).
 5. Przygotowanie modułu analitycznego AI generującego zindywidualizowany raport 
    diagnostyczny na podstawie przeprowadzonych pomiarów.
 6. Przeprowadzenie procesu weryfikacji i walidacji wdrożonych komponentów oprogramowania.
@@ -231,8 +232,12 @@ A. Punkty Końcowe API (Serwer ASP.NET Core):
    - Pobranie migawki zasobów (RAM/CPU) przed rozpoczęciem testu.
    - Wywołanie zapytania HTTP POST pod adres `/api/generate` Ollamy z wyłączonym
      strumieniowaniem (`stream: false`), co wymusza zebranie wskaźników przez sam silnik LLM.
-   - Próbkowanie parametrów karty graficznej GPU (nvidia-smi) oraz systemu operacyjnego (WMI)
-     natychmiast po zakończeniu generowania odpowiedzi przez LLM.
+   - Równoległe uruchomienie pętli próbkującej GPU (nvidia-smi) w osobnym zadaniu asynchronicznym
+     (`Task.Run`), która odpytuje kartę graficzną co 1.5 sekundy przez cały czas trwania
+     generowania i śledzi wartości szczytowe (peak) dla: zużycia VRAM, obciążenia rdzeni GPU,
+     poboru mocy oraz temperatury.
+   - Po zakończeniu generowania — zatrzymanie pętli próbkującej przez `CancellationTokenSource`
+     i pobranie końcowej migawki RAM/CPU z systemu operacyjnego.
    - Obliczenie metryk wydajności i wysłanie zdarzenia typu `completed` zawierającego 
      cały spakowany obiekt pomiarowy `BenchmarkRun`.
 
@@ -248,26 +253,42 @@ backend oblicza metryki wydajności w jednostkach fizycznych:
 4. Szybkość oceny i przetwarzania promptu (Prompt Eval Rate [t/s]):
    PromptEvalTokensPerSec = prompt_eval_count / (prompt_eval_duration / 1,000,000,000.0)
 
-C. Kalkulator Kompatybilności i Szacowania Wydajności (CompatibilityPanel.jsx):
-Aby prognozować wydajność bez rzeczywistego uruchamiania testu (co oszczędza czas 
-użytkownika i zapobiega próbom załadowania zbyt dużych modeli), wdrożono algorytm oparty
-na fizyce limitacji przepływu pamięci (ang. Memory-Bandwidth Bound):
-1. Generowanie tokenów w modelach LLM wymaga odczytania całego pliku wag modelu z pamięci
-   do rejestrów procesora graficznego przy każdym wygenerowanym tokenie.
-2. Wąskim gardłem nie jest moc obliczeniowa GPU, lecz szerokość szyny danych pamięci.
-3. Zaobserwowano silną korelację między rozmiarem pamięci VRAM GPU a jej przepustowością.
-   Współczynnik wynosi w przybliżeniu: Przepustowość [GB/s] ≈ 40 * VRAM [GB].
-4. Sprawność silnika llama.cpp wynosi średnio 33%-36% fizycznej przepustowości.
-5. Zaimplementowano programowy wzór prognozy TPS (Tokens Per Second):
-   - Klasa wydajności dedykowanego GPU (gpuPower):
-     gpuPower = Math.round(activeGpu.vram_gb * 16.5) (dla kart dedykowanych >= 2 GB VRAM)
-     gpuPower = 35 (dla zintegrowanych układów graficznych)
-   - Szacowana prędkość generowania (estTps):
-     estTps = gpuPower / (ModelSizeB * 1.1)
-     Co sprowadza się do uproszczonej postaci:
-     estTps = (15 * VRAM [GB]) / RozmiarModelu [Miliardy parametrów].
-Algorytm ten idealnie prognozuje wydajność (np. dla karty RTX 3060 z 12 GB VRAM i modelu 3B
-daje wynik szacunkowy ~60 t/s, co idealnie pokrywa się z rzeczywistymi pomiarami).
+C. Moduł Zgodności Sprzętowej (CompatibilityPanel.jsx):
+Moduł kompatybilności prezentuje wizualną analizę alokacji pamięci i dopasowania sprzętu
+na podstawie wyłącznie surowych danych pobranych z systemu — bez żadnego szacowania,
+heurystyk ani wartości domyślnych:
+
+1. Źródła danych (tylko rzeczywiste dane systemowe):
+   - Rozmiar parametrów modelu (parameter_size): pobierany z odpowiedzi API /api/tags 
+     silnika Ollama. Jeśli pole to jest puste lub nieobecne, moduł wyświetla 
+     "Brak informacji" i nie przeprowadza żadnych obliczeń.
+   - Rodzina modelu (family): pobierana z tego samego źródła. Nigdy nie jest
+     odgadywana na podstawie nazwy pliku lub tagu modelu.
+   - Kwantyzacja modelu (quantization_level): pobierana z danych Ollamy. Jeśli
+     kwantyzacja nie pasuje do żadnej ze znanych wartości (Q4_K_M, Q8_0, FP16),
+     moduł oznacza dane jako niedostępne zamiast estymować parametry.
+   - Dane sprzętu (VRAM, RAM, CPU): pobierane przez backend z WMI. Jeśli dane
+     są niedostępne (wartość null), odpowiedni wskaźnik wyświetla "Brak informacji".
+
+2. Obliczenia alokacji pamięci (tylko gdy dostępne są kompletne dane systemowe):
+   - Szacowany rozmiar modelu w pamięci [GB]:
+     requiredMemory = RozmiarB × kwant.multiplier + kwant.overhead
+   - Liczba warstw w VRAM: layersInVram = floor(vramDostępne / (requiredMemory / numLayers))
+   - Pozostałe warstwy trafiają do RAM lub pliku wymiany (swap na dysku).
+
+3. Wskaźnik zgodności (Compatibility Score):
+   Obliczany wyłącznie gdy dostępne są jednocześnie: rozmiar modelu, kwantyzacja
+   i dostępna pamięć RAM z systemu. Wynik to wartość od 10% do 100%:
+   - 100%: model mieści się w całości w pamięci VRAM.
+   - 45–90%: część warstw jest przeładowywana do RAM (tryb hybrydowy).
+   - 10–40%: model przekracza dostępną pamięć — zostanie użyty plik wymiany.
+
+4. Prędkość generowania:
+   Sekcja szybkości wyświetla wyłącznie zmierzoną wartość tokens/sekundę (t/s)
+   z faktycznie przeprowadzonego testu benchmarkowego. Jeśli test nie został
+   przeprowadzony, wyświetlana jest wartość "--" z komunikatem informującym
+   o konieczności uruchomienia testu. żadna wartość nie jest szacowana ani
+   prognozowana na podstawie specyfikacji sprzętu.
 
 D. Diagramy UML (do wygenerowania i edycji w https://mermaid.live/):
 W celu zobrazowania architektury, przepływu danych oraz modelu obiektowego systemu, opracowano poniższe specyfikacje diagramów w standardzie Mermaid. Kod ten można bezpośrednio skopiować i wkleić w edytorze online pod adresem https://mermaid.live/ w celu wygenerowania i pobrania grafiki (np. w formacie PNG lub SVG).
@@ -324,7 +345,11 @@ Ten diagram sekwencji przedstawia cały przepływ procesu benchmarkowania krok p
 5. Backend wysyła zapytanie do serwisu SystemInfoService, aby wykonać początkowy snapshot zużycia zasobów (CPU i RAM) przed obciążeniem.
 6. Następnie backend wysyła żądanie wykonania wnioskowania (generowania tekstu) do Ollamy poprzez endpoint POST `/api/generate` z flagą `stream: false`. Dzięki wyłączeniu strumieniowania po stronie Ollamy, silnik sam dokładnie mierzy czas generowania bezpośrednio na poziomie jądra sprzętowego.
 7. Po ukończeniu generowania, Ollama zwraca backendowi odpowiedź z surowymi metrykami czasowymi (podanymi w nanosekundach).
-8. W tym samym momencie backend wysyła zapytania do SystemInfoService, by natychmiast odczytać parametry obciążenia GPU (zużycie VRAM, pobór mocy, temperaturę) za pomocą nvidia-smi oraz pobrać końcowy snapshot systemu (RAM/CPU).
+8. Równocześnie z uruchomieniem generowania (krok 6) backendowy moduł startuje w tle pętlę
+   próbkującą opartą na `Task.Run`, która co 1.5 sekundy wywołuje narzędzie nvidia-smi.
+   Każda próbka porównywana jest z dotychczasowym maksimum, dzięki czemu w wyniku końcowym
+   zapisywane są wartości szczytowe (peak): zużycie VRAM, obciążenie GPU, pobrór mocy i temperatura.
+   Po zakończeniu generowania pętla jest przerywana przez `CancellationTokenSource`.
 9. Backend przelicza otrzymane dane z nanosekund na czytelne jednostki (np. tokeny na sekundę, sekundy opóźnienia do pierwszego tokena).
 10. Ponownie wywoływana jest Ollama, by na bazie zgromadzonych wyników telemetrycznych wygenerować tekstowy raport analityczny przy użyciu sztucznej inteligencji.
 11. Kompletne dane (wyniki, specyfikacja komputera oraz raport AI) są pakowane do jednego obiektu JSON i wysyłane strumieniem SSE do frontendu z typem zdarzenia "completed".
@@ -355,9 +380,13 @@ sequenceDiagram
     Note over O: Wnioskowanie (Generowanie tokenów)
     O-->>B: Odpowiedź JSON (Metryki czasowe w nanosekundach)
 
-    B-->>F: SSE: status="running", message="Próbkowanie parametrów obciążenia GPU i CPU..."
-    B->>S: GetNvidiaSmiAsync() (Obciążenie GPU, VRAM, temp, wat)
-    S-->>B: Metryki GPU
+    B-->>F: SSE: status="running", message="Uruchamianie pętli próbkowania GPU (co 1.5s)..."
+    loop Co 1.5 sekundy (równoległe z generowaniem)
+        B->>S: GetNvidiaSmiAsync() (Próbka: VRAM, Util, Watt, Temp)
+        S-->>B: Metryki GPU (jedna próbka)
+        Note over B: Jeśli nowa próbka > peak, zaktualizuj wartość szczytową
+    end
+    Note over B: Generowanie zakończone — anuluj pętlę (CancellationTokenSource)
     B->>S: GetSystemSnapshot() (Końcowe obciążenie RAM/CPU)
     S-->>B: Finalny Snapshot
 
@@ -513,11 +542,12 @@ Walidacja potwierdza, czy aplikacja realizuje cele użytkownika w sposób prawid
      obliczeniowego (w mikrosekundach/nanosekundach). Dzięki temu wskaźnik TPS 
      jest w 100% niezależny od czasu renderowania HTML w przeglądarce czy narzutu
      protokołu sieciowego.
-3. Walidacja fizycznych założeń kompatybilności:
-   - Dane dotyczące zajętości VRAM i RAM generowane przez kalkulator kompatybilności 
-     zostały zestawione z rzeczywistym zużyciem wykazanym przez system operacyjny. 
-     Różnice nie przekraczają 5-7%, co potwierdza wysoką celność wdrożonego modelu
-     matematycznego.
+3. Walidacja danych zgodności sprzętowej:
+   - Moduł CompatibilityPanel działa wyłącznie na surowych danych pobranych z systemu.
+     W przypadku braku informacji (np. niezidentyfikowanej kwantyzacji, braku pola
+     parameter_size w odpowiedzi Ollamy, lub braku danych o RAM z WMI), odpowiedni
+     wskaźnik wyświetla "Brak informacji" zamiast wyświetlać wartość szacowaną.
+     Eliminuje to ryzyko prezentacji użytkownikowi myślących lub nieprawdziwych liczb.
 
 
 ================================================================================
@@ -542,13 +572,16 @@ na sformułowanie następujących wniosków inżynierskich:
    instalacji systemów DBMS (np. SQLite, PostgreSQL) po stronie serwera i eliminując
    problemy z blokowaniem plików bazodanowych przy jednoczesnym zachowaniu pełnej 
    trwałości danych użytkownika.
-4. Krytyczność pamięci VRAM GPU:
-   Wyniki pomiarów jednoznacznie dowodzą, że dedykowane karty graficzne (GPU) są 
-   podstawowym czynnikiem determinującym użyteczność lokalnego AI. Uruchomienie modelu
-   w całości w pamięci VRAM (brak offloadingu warstw do pamięci systemowej RAM) pozwala
-   na osiągnięcie prędkości generowania tokenów rzędu 40-120 t/s. Przeniesienie choćby
-   części warstw do RAM (tryb CPU/mieszany) obniża wydajność kilkukrotnie, często 
-   poniżej progu komfortowego czytania tekstu przez człowieka (poniżej 5-8 t/s).
+4. Rygorystyczne trzymanie się danych systemowych:
+   Wyniki pomiarów oraz analizy architektonicznej doprowadziły do decyzji projektowej
+   o odstąpieniu od wszelkiego szacowania i heurystyk w module zgodności sprzętowej.
+   Wszystkie prezentowane informacje — rozmiar modelu, rodzina, kwantyzacja, prędkość
+   generowania, zajętość pamięci — pochodzą wyłącznie z rzeczywistych danych
+   telemetrycznych pobranych z systemu (Ollama API, WMI, nvidia-smi). Jeśli dane są
+   niedostępne, interfejs explicite informuje o braku informacji zamiast wyświetlać
+   wartości domysłne lub prognozowane. Podejście to zwiększa wiarygodność systemu
+   i eliminuje ryzyko podjęcia błędnych decyzji przez użytkownika na podstawie
+   nieprawdziwych "szacunków".
 5. Architektura modułowa jako baza do rozwoju:
    Modułowa struktura kodu (klasy DTO, wstrzykiwane serwisy Singleton w kontenerze DI,
    rozdzielone komponenty React) umożliwia łatwe wdrożenie nowych funkcjonalności 

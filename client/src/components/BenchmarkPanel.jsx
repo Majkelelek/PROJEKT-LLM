@@ -397,6 +397,11 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
             <CompatibilityPanel
               specs={runResult.specs}
               fixedModelName={runResult.results.ollama.model}
+              fixedModelDetails={{
+                parameter_size: runResult.results.ollama.parameter_size,
+                quantization_level: runResult.results.ollama.quantization_level,
+                family: runResult.results.ollama.family
+              }}
               hideSelectors={true}
               actualTps={runResult.results.ollama.tokens_per_sec}
             />

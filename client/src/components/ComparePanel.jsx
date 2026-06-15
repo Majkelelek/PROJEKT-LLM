@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import CompatibilityPanel from "./CompatibilityPanel";
 
 // Pomocnicza funkcja do wyboru głównej/najsilniejszej karty GPU
@@ -17,12 +17,7 @@ function getBestGpu(specs) {
 }
 
 export default function ComparePanel() {
-  const [history, setHistory] = useState([]);
-  const [runAId, setRunAId] = useState("");
-  const [runBId, setRunBId] = useState("");
-
-  // Wczytywanie historii testów z localStorage
-  useEffect(() => {
+  const [history] = useState(() => {
     try {
       const localData = localStorage.getItem("projekt_ai_history");
       if (localData) {
@@ -36,23 +31,21 @@ export default function ComparePanel() {
         }));
 
         // Sortowanie od najnowszego
-        const sorted = sanitized.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-        setHistory(sorted);
-
-        // Ustawienie domyślnych dwóch różnych testów do porównania
-        if (sorted.length > 0) {
-          setRunAId(sorted[0].id);
-          if (sorted.length > 1) {
-            setRunBId(sorted[1].id);
-          } else {
-            setRunBId(sorted[0].id);
-          }
-        }
+        return sanitized.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
       }
     } catch (e) {
       console.error("Błąd wczytywania historii w panelu porównawczym:", e);
     }
-  }, []);
+    return [];
+  });
+
+  const [runAId, setRunAId] = useState(() => {
+    return history.length > 0 ? history[0].id : "";
+  });
+
+  const [runBId, setRunBId] = useState(() => {
+    return history.length > 1 ? history[1].id : (history.length > 0 ? history[0].id : "");
+  });
 
   const runA = history.find((r) => r.id === runAId) || null;
   const runB = history.find((r) => r.id === runBId) || null;
