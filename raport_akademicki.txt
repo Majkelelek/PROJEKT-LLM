@@ -269,6 +269,172 @@ na fizyce limitacji przepływu pamięci (ang. Memory-Bandwidth Bound):
 Algorytm ten idealnie prognozuje wydajność (np. dla karty RTX 3060 z 12 GB VRAM i modelu 3B
 daje wynik szacunkowy ~60 t/s, co idealnie pokrywa się z rzeczywistymi pomiarami).
 
+D. Diagramy UML (do wygenerowania i edycji w https://mermaid.live/):
+W celu zobrazowania architektury, przepływu danych oraz modelu obiektowego systemu, opracowano poniższe specyfikacje diagramów w standardzie Mermaid. Kod ten można bezpośrednio skopiować i wkleić w edytorze online pod adresem https://mermaid.live/ w celu wygenerowania i pobrania grafiki (np. w formacie PNG lub SVG).
+
+1. Diagram Architektury / Komponentów (Component Diagram)
+Pokazuje podział systemu na warstwę prezentacji (React/Vite), warstwę logiki (ASP.NET Core z serwisami) oraz interfejsy zewnętrzne i sprzętowe (Ollama API, WMI, nvidia-smi):
+
+```mermaid
+flowchart TB
+    subgraph Warstwa_Prezentacji [Warstwa Prezentacji - React / Vite]
+        A[React Components / UI]
+        B[(localStorage - Historia Wyników)]
+        A <-->|Zapis i odczyt sesji| B
+    end
+
+    subgraph Warstwa_Logiki [Warstwa Logiki - ASP.NET Core 8.0]
+        C[Minimal APIs - Endpoints]
+        D[SystemInfoService - Telemetria i sprzęt]
+        E[OllamaClientService - Integracja AI]
+        C --> D
+        C --> E
+    end
+
+    subgraph Warstwa_Niskopoziomowa [Warstwa Niskopoziomowa i Usługi]
+        F[Ollama API - port 11434]
+        G[WMI - Windows Management Instrumentation]
+        H[nvidia-smi - Narzędzie CLI]
+        I[Rejestr Systemowy Windows]
+    end
+
+    A -->|1. HTTP / SSE| C
+    E -->|2. REST HTTP JSON| F
+    D -->|3. Zapytania WQL| G
+    D -->|4. nvidia-smi query-gpu| H
+    D -->|5. Odczyt rejestru systemowego| I
+```
+
+2. Diagram Sekwencji (Sequence Diagram) - Przepływ procesu benchmarkowania
+Ilustruje pełną interakcję asynchroniczną i strumieniowanie informacji za pomocą Server-Sent Events (SSE) podczas uruchamiania testu wydajności:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Użytkownik as Użytkownik (Przeglądarka)
+    participant F as Frontend (React App)
+    participant B as Backend (ASP.NET Core)
+    participant O as Ollama Engine (HTTP)
+    participant S as SystemInfoService (WMI / nvidia-smi)
+
+    Użytkownik->>F: Kliknięcie "Uruchom Test"
+    F->>B: POST /api/benchmark/run-stream (model, complexity)
+    Note over B: Rozpoczęcie strumienia SSE (text/event-stream)
+    B-->>F: SSE: status="running", message="Sprawdzanie stanu Ollama..."
+    B->>O: GET /api/tags (Sprawdzenie połączenia)
+    O-->>B: Status 200 OK (Lista modeli)
+    
+    B-->>F: SSE: status="running", message="Pobieranie początkowej migawki systemu..."
+    B->>S: GetSystemSnapshot() (Zużycie CPU/RAM)
+    S-->>B: Snapshot (RAM/CPU info)
+
+    B-->>F: SSE: status="running", message="Wykonywanie testu wnioskowania LLM..."
+    B->>O: POST /api/generate (prompt, stream=false)
+    Note over O: Wnioskowanie (Generowanie tokenów)
+    O-->>B: Odpowiedź JSON (Metryki czasowe w nanosekundach)
+
+    B-->>F: SSE: status="running", message="Próbkowanie parametrów obciążenia GPU i CPU..."
+    B->>S: GetNvidiaSmiAsync() (Obciążenie GPU, VRAM, temp, wat)
+    S-->>B: Metryki GPU
+    B->>S: GetSystemSnapshot() (Końcowe obciążenie RAM/CPU)
+    S-->>B: Finalny Snapshot
+
+    Note over B: Obliczenie metryk (Tokens/s, TTFT, Load time)
+    Note over B: Inicjalizacja generowania raportu AI (Analyst)
+    B->>O: POST /api/generate (prompt z danymi telemetrii)
+    O-->>B: Wygenerowany raport Markdown (ai_report)
+
+    Note over B: Agregacja do obiektu BenchmarkRun
+    B-->>F: SSE: status="completed", run=BenchmarkRun (JSON)
+    Note over F: Zapis wyniku do localStorage
+    F-->>Użytkownik: Prezentacja wyników i raportu AI w UI
+```
+
+3. Diagram Klas i Struktur Danych (Class Diagram)
+Przedstawia model obiektowy backendu, klasy DTO (Data Transfer Objects) przesyłane do frontendu oraz główne serwisy aplikacyjne:
+
+```mermaid
+classDiagram
+    class SystemSpecs {
+        +string OS
+        +string CpuModel
+        +int CpuPhysicalCores
+        +int CpuLogicalCores
+        +double TotalRamGb
+        +List~GpuDetail~ Gpus
+    }
+
+    class GpuDetail {
+        +string Name
+        +double VramGb
+    }
+
+    class LiveMetrics {
+        +double CpuGlobalPercent
+        +List~double~ CpuCoresPercent
+        +double RamUsedGb
+        +double RamPercent
+    }
+
+    class BenchmarkRun {
+        +Guid Id
+        +DateTime Timestamp
+        +string ModelName
+        +string Complexity
+        +SystemSpecs Specs
+        +BenchmarkResults Results
+        +string AiReport
+    }
+
+    class BenchmarkResults {
+        +OllamaResult Ollama
+    }
+
+    class OllamaResult {
+        +double TotalTimeSec
+        +double LatencySec
+        +double TokensPerSec
+        +double PromptEvalTokensPerSec
+        +double LoadDurationSec
+        +double PromptEvalDurationSec
+        +double EvalDurationSec
+        +int PromptTokensCount
+        +int EvalTokensCount
+        +bool GpuMetricsAvailable
+        +double GpuVramUsedMb
+        +double GpuVramTotalMb
+        +double GpuUtilPercent
+        +double GpuPowerDrawW
+        +double GpuPowerLimitW
+        +double GpuTempC
+        +double SysRamUsedGb
+        +double SysRamTotalGb
+        +double SysRamPercent
+        +double SysCpuPercent
+    }
+
+    class SystemInfoService {
+        +GetSystemSpecs() SystemSpecs
+        +GetLiveMetrics() LiveMetrics
+        +GetNvidiaSmiAsync() Task~GpuMetrics~
+        +GetSystemSnapshot() SystemSnapshot
+    }
+
+    class OllamaClientService {
+        -HttpClient _httpClient
+        -SystemInfoService _sysInfo
+        +GetModelsAsync() Task~List~string~~
+        +RunLlmBenchmarkAsync(string model, string complexity) Task~OllamaResult~
+        +GenerateAiReportAsync(OllamaResult metrics, SystemSpecs specs) Task~string~
+    }
+
+    BenchmarkRun --> SystemSpecs : "zawiera"
+    BenchmarkRun --> BenchmarkResults : "zawiera"
+    BenchmarkResults --> OllamaResult : "zawiera"
+    SystemSpecs "1" *-- "many" GpuDetail : "posiada"
+    OllamaClientService ..> SystemInfoService : "korzysta z"
+```
+
 
 ================================================================================
 6. WERYFIKACJA I WALIDACJA
