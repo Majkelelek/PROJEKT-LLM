@@ -237,6 +237,11 @@ export default function ComparePanel() {
               <CompatibilityPanel
                 specs={runA.specs}
                 fixedModelName={runA.results?.ollama?.model || runA.selected_model}
+                fixedModelDetails={{
+                  parameter_size: runA.results?.ollama?.parameter_size,
+                  quantization_level: runA.results?.ollama?.quantization_level,
+                  family: runA.results?.ollama?.family
+                }}
                 hideSelectors={true}
                 actualTps={runA.results?.ollama?.tokens_per_sec}
               />
@@ -367,6 +372,11 @@ export default function ComparePanel() {
               <CompatibilityPanel
                 specs={runB.specs}
                 fixedModelName={runB.results?.ollama?.model || runB.selected_model}
+                fixedModelDetails={{
+                  parameter_size: runB.results?.ollama?.parameter_size,
+                  quantization_level: runB.results?.ollama?.quantization_level,
+                  family: runB.results?.ollama?.family
+                }}
                 hideSelectors={true}
                 actualTps={runB.results?.ollama?.tokens_per_sec}
               />

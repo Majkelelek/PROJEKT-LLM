@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { API_URL } from "../config";
 
 // Komponent głównego panelu kontrolnego (Dashboard) wyświetlający podzespoły sprzętowe oraz wykresy użycia zasobów w czasie rzeczywistym.
 export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
@@ -9,7 +10,7 @@ export default function Dashboard({ specs, liveMetrics, onRunBenchmarkTab }) {
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
-        const res = await fetch("http://127.0.0.1:8000/api/system-info/live");
+        const res = await fetch(`${API_URL}/api/system-info/live`);
         if (res.ok) {
           const data = await res.json();
           setLocalLive(data);

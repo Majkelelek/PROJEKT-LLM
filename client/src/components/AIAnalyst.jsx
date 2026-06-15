@@ -314,6 +314,11 @@ export default function AIAnalyst({ currentRun }) {
             <CompatibilityPanel 
               specs={currentRun.specs} 
               fixedModelName={currentRun.results.ollama.model}
+              fixedModelDetails={{
+                parameter_size: currentRun.results.ollama.parameter_size,
+                quantization_level: currentRun.results.ollama.quantization_level,
+                family: currentRun.results.ollama.family
+              }}
               hideSelectors={true}
               actualTps={currentRun.results.ollama.tokens_per_sec}
             />

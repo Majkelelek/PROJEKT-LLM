@@ -75,10 +75,65 @@ namespace ProjektAI.Backend.Services
             return modelsList;
         }
 
+        // Pobiera szczegółową listę modeli pobranych lokalnie w Ollamie
+        public async Task<List<OllamaModelInfo>> GetOllamaModelsDetailedAsync()
+        {
+            var modelsList = new List<OllamaModelInfo>();
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3.0));
+                var response = await _httpClient.GetAsync($"{OllamaBaseUrl}/api/tags", cts.Token);
+                if (response.IsSuccessStatusCode)
+                {
+                    var data = await response.Content.ReadFromJsonAsync<OllamaTagsResponse>(cancellationToken: cts.Token);
+                    if (data?.Models != null)
+                    {
+                        foreach (var model in data.Models)
+                        {
+                            if (!string.IsNullOrEmpty(model.Name))
+                            {
+                                modelsList.Add(new OllamaModelInfo
+                                {
+                                    Name = model.Name,
+                                    ParameterSize = model.Details?.ParameterSize ?? string.Empty,
+                                    QuantizationLevel = model.Details?.QuantizationLevel ?? string.Empty,
+                                    Family = model.Details?.Family ?? string.Empty
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Nie udało się pobrać szczegółowej listy modeli z usługi Ollama");
+            }
+            return modelsList;
+        }
+
         // Uruchamia test wydajnościowy (Benchmark) dla wybranego modelu LLM na określonym poziomie złożoności.
         // Opcjonalnie przyjmuje SystemInfoService do próbkowania metryk GPU i RAM podczas testu.
         public async Task<OllamaResult> RunLlmBenchmarkAsync(string model, string complexity = "medium", SystemInfoService? sysInfo = null)
         {
+            string paramSize = "";
+            string quantLevel = "";
+            string family = "";
+            try
+            {
+                var detailedModels = await GetOllamaModelsDetailedAsync();
+                var match = detailedModels.Find(m => m.Name == model);
+                if (match != null)
+                {
+                    paramSize = match.ParameterSize;
+                    quantLevel = match.QuantizationLevel;
+                    family = match.Family;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("Nie udało się pobrać metryk modelu {Model} z tags: {Message}", model, ex.Message);
+            }
+
             string prompt;
             int numPredict;
             double temp;
@@ -194,7 +249,12 @@ namespace ProjektAI.Backend.Services
                 SysRamUsedGb = ramAfterUsed,
                 SysRamTotalGb = ramAfterTotal,
                 SysRamPercent = ramAfterPct,
-                SysCpuPercent = cpuAfterPct
+                SysCpuPercent = cpuAfterPct,
+
+                // Parametry modelu odczytane z Ollamy
+                ParameterSize = paramSize,
+                QuantizationLevel = quantLevel,
+                Family = family
             };
         }
 
@@ -357,6 +417,21 @@ Raport musi być w całości napisany w języku polskim. Użyj profesjonalnego, 
         {
             [JsonPropertyName("name")]
             public string? Name { get; set; }
+
+            [JsonPropertyName("details")]
+            public OllamaModelItemDetails? Details { get; set; }
+        }
+
+        private class OllamaModelItemDetails
+        {
+            [JsonPropertyName("parameter_size")]
+            public string? ParameterSize { get; set; }
+
+            [JsonPropertyName("quantization_level")]
+            public string? QuantizationLevel { get; set; }
+
+            [JsonPropertyName("family")]
+            public string? Family { get; set; }
         }
 
         private class OllamaGenerateResponse

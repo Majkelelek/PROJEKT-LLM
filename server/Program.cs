@@ -86,11 +86,11 @@ app.MapGet("/api/models", async (OllamaClientService ollama) =>
         return Results.Ok(new
         {
             ollama_active = false,
-            models = Array.Empty<string>()
+            models = Array.Empty<OllamaModelInfo>()
         });
     }
 
-    var models = await ollama.GetOllamaModelsAsync();
+    var models = await ollama.GetOllamaModelsDetailedAsync();
     return Results.Ok(new
     {
         ollama_active = true,

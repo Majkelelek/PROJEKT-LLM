@@ -99,6 +99,16 @@ namespace ProjektAI.Backend.Models
         [JsonPropertyName("sys_cpu_percent")]
         public double SysCpuPercent { get; set; }
 
+        // Parametry modelu odczytane z Ollamy
+        [JsonPropertyName("parameter_size")]
+        public string ParameterSize { get; set; } = string.Empty;
+
+        [JsonPropertyName("quantization_level")]
+        public string QuantizationLevel { get; set; } = string.Empty;
+
+        [JsonPropertyName("family")]
+        public string Family { get; set; } = string.Empty;
+
         // Komunikat o błędzie (jeśli wystąpił podczas wykonywania testu)
         [JsonPropertyName("error")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

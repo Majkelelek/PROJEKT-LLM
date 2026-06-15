@@ -21,48 +21,118 @@ const QUANTIZATIONS = [
 ];
 
 // Pomocnicza funkcja parsująca nazwę modelu z usługi Ollama na parametry rozmiaru i liczby warstw sieci neuronowej
-function parseOllamaModel(modelName) {
+function parseOllamaModel(modelName, modelDetails = null) {
   const name = modelName.toLowerCase();
 
-  let sizeB = 8.0;
-  let layers = 32;
-  let displayName = modelName;
+  let sizeB = null;
+  let layers = null;
+  let displayName = null;
 
-  if (name.includes("1.5b") || name.includes("1b")) {
-    sizeB = 1.5;
-    layers = 16;
-    displayName = `Llama / DeepSeek (1.5B)`;
-  } else if (name.includes("3b") || name.includes("3.2")) {
-    sizeB = 3.2;
-    layers = 28;
-    displayName = `Llama 3.2 (3B)`;
-  } else if (name.includes("8b") || name.includes("3.1") || name.includes("3.3") || name.includes("llama3")) {
-    sizeB = 8.0;
-    layers = 32;
-    displayName = `Llama 3.1 / 3.3 (8B)`;
-  } else if (name.includes("14b") || name.includes("phi4") || name.includes("phi-4")) {
-    sizeB = 14.0;
-    layers = 40;
-    displayName = `Phi-4 / DeepSeek (14B)`;
-  } else if (name.includes("32b") || name.includes("32")) {
-    sizeB = 32.5;
-    layers = 64;
-    displayName = `Qwen 2.5 (32B)`;
-  } else if (name.includes("70b") || name.includes("llama3.3") || name.includes("llama-3.3")) {
-    sizeB = 70.0;
-    layers = 80;
-    displayName = `Llama 3.1 (70B)`;
-  } else if (name.includes("671b") || name.includes("r1")) {
-    sizeB = 671.0;
-    layers = 60;
-    displayName = `DeepSeek R1 (671B)`;
+  // 1. Jeśli przekazano bezpośrednio szczegóły z Ollamy (mechanizm dynamiczny), używamy ich!
+  if (modelDetails && modelDetails.parameter_size) {
+    const pSizeStr = modelDetails.parameter_size.toLowerCase();
+    const match = pSizeStr.match(/(\d+(?:\.\d+)?)/);
+    if (match) {
+      sizeB = parseFloat(match[1]);
+      
+      const estimateLayers = (size) => {
+        if (size <= 2) return 24;
+        if (size <= 4) return 28;
+        if (size <= 9) return 32;
+        if (size <= 15) return 40;
+        if (size <= 35) return 64;
+        if (size <= 75) return 80;
+        return 96;
+      };
+      
+      // Wyjątki dla popularnych rodzin, jeśli rodzina jest znana z tagów
+      const family = (modelDetails.family || "").toLowerCase();
+      if (family.includes("llama")) {
+        if (Math.abs(sizeB - 1.0) < 0.5) layers = 16;
+        else if (Math.abs(sizeB - 3.0) < 0.5) layers = 28;
+        else if (Math.abs(sizeB - 8.0) < 1.0) layers = 32;
+        else if (Math.abs(sizeB - 70.0) < 5.0) layers = 80;
+      }
+      
+      if (!layers) {
+        layers = estimateLayers(sizeB);
+      }
+      
+      const cleanName = modelName.split(":")[0];
+      const capitalized = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
+      displayName = `${capitalized} (${modelDetails.parameter_size})`;
+    }
+  }
+
+  // 2. Jeśli nie mamy szczegółowych danych z API, przechodzimy do dopasowania heurystycznego
+  if (sizeB === null) {
+    if (name.includes("1.5b")) {
+      sizeB = 1.5;
+      layers = 16;
+      displayName = `Llama / DeepSeek (1.5B)`;
+    } else if (name.includes("1b")) {
+      sizeB = 1.0;
+      layers = 16;
+      displayName = `Llama 3.2 (1B)`;
+    } else if (name.includes("3b") || name.includes("3.2")) {
+      sizeB = 3.2;
+      layers = 28;
+      displayName = `Llama 3.2 (3B)`;
+    } else if (name.includes("8b") || name.includes("3.1") || name.includes("3.3") || name.includes("llama3")) {
+      sizeB = 8.0;
+      layers = 32;
+      displayName = `Llama 3.1 / 3.3 (8B)`;
+    } else if (name.includes("14b") || name.includes("phi4") || name.includes("phi-4")) {
+      sizeB = 14.0;
+      layers = 40;
+      displayName = `Phi-4 / DeepSeek (14B)`;
+    } else if (name.includes("32b") || name.includes("32")) {
+      sizeB = 32.5;
+      layers = 64;
+      displayName = `Qwen 2.5 (32B)`;
+    } else if (name.includes("70b") || name.includes("llama3.3") || name.includes("llama-3.3")) {
+      sizeB = 70.0;
+      layers = 80;
+      displayName = `Llama 3.1 (70B)`;
+    } else if (name.includes("671b") || name.includes("r1")) {
+      sizeB = 671.0;
+      layers = 60;
+      displayName = `DeepSeek R1 (671B)`;
+    }
+  }
+
+  // 3. Ostateczny fallback w oparciu o regex z samej nazwy (szukamy liczby przed literą "b" np. "7b")
+  if (sizeB === null) {
+    const estimateLayers = (size) => {
+      if (size <= 2) return 24;
+      if (size <= 4) return 28;
+      if (size <= 9) return 32;
+      if (size <= 15) return 40;
+      if (size <= 35) return 64;
+      if (size <= 75) return 80;
+      return 96;
+    };
+
+    const bMatch = name.match(/(\d+(?:\.\d+)?)\s*b/);
+    if (bMatch) {
+      sizeB = parseFloat(bMatch[1]);
+      layers = estimateLayers(sizeB);
+      const cleanName = modelName.split(":")[0];
+      const capitalized = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
+      displayName = `${capitalized} (${sizeB}B)`;
+    } else {
+      // Domyślna wartość w przypadku braku jakichkolwiek liczb z "b"
+      sizeB = 8.0;
+      layers = 32;
+      displayName = modelName;
+    }
   }
 
   return { sizeB, layers, displayName };
 }
 
 // Komponent panelu kompatybilności (CompatibilityPanel) oceniający możliwość uruchomienia wybranego modelu na wykrytym sprzęcie
-export default function CompatibilityPanel({ specs, fixedModelName = null, hideSelectors = false, actualTps = null }) {
+export default function CompatibilityPanel({ specs, fixedModelName = null, fixedModelDetails = null, hideSelectors = false, actualTps = null }) {
   const [selectedModelId, setSelectedModelId] = useState("llama32-3b");
   const [selectedQuantId, setSelectedQuantId] = useState("Q4_K_M");
 
@@ -71,7 +141,7 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, hideS
 
   // Jeśli przekazano konkretny przetestowany model, blokujemy selektory i parsujemy jego parametry
   if (fixedModelName) {
-    const parsed = parseOllamaModel(fixedModelName);
+    const parsed = parseOllamaModel(fixedModelName, fixedModelDetails);
     model = {
       id: "fixed-model",
       name: parsed.displayName,
@@ -79,7 +149,36 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, hideS
       layers: parsed.layers,
       description: `Model przetestowany w tym uruchomieniu: ${fixedModelName}`
     };
-    quant = QUANTIZATIONS[0];
+
+    // Spróbujmy znaleźć rzeczywistą kwantyzację z testu
+    if (fixedModelDetails && fixedModelDetails.quantization_level) {
+      const qLevel = fixedModelDetails.quantization_level.toUpperCase();
+      const matchedQuant = QUANTIZATIONS.find(q => qLevel.includes(q.id.toUpperCase()) || q.id.toUpperCase().includes(qLevel));
+      if (matchedQuant) {
+        quant = matchedQuant;
+      } else {
+        // Estymowanie parametrów dla niestandardowych kwantyzacji
+        let multiplier = 0.62;
+        let overhead = 0.6;
+        if (qLevel.includes("Q2")) { multiplier = 0.4; overhead = 0.4; }
+        else if (qLevel.includes("Q3")) { multiplier = 0.5; overhead = 0.5; }
+        else if (qLevel.includes("Q5")) { multiplier = 0.75; overhead = 0.7; }
+        else if (qLevel.includes("Q6")) { multiplier = 0.85; overhead = 0.75; }
+        else if (qLevel.includes("Q8")) { multiplier = 1.02; overhead = 0.8; }
+        else if (qLevel.includes("FP16") || qLevel.includes("F16")) { multiplier = 2.05; overhead = 1.5; }
+        else if (qLevel.includes("FP32") || qLevel.includes("F32")) { multiplier = 4.1; overhead = 2.0; }
+        
+        quant = {
+          id: qLevel,
+          name: qLevel,
+          multiplier: multiplier,
+          overhead: overhead,
+          label: `Wykryta kwantyzacja: ${qLevel}`
+        };
+      }
+    } else {
+      quant = QUANTIZATIONS[0];
+    }
   } else {
     model = PREDEFINED_MODELS.find(m => m.id === selectedModelId) || PREDEFINED_MODELS[0];
   }

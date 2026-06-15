@@ -1,19 +1,20 @@
 import { useState, useEffect, useRef } from "react";
 import CompatibilityPanel from "./CompatibilityPanel";
+import { API_URL } from "../config";
 
 // Komponent panelu testowego (BenchmarkPanel) umożliwiający uruchomienie testu wydajności Ollama z wizualizacją logów w konsoli.
 export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComplete }) {
   // --- Stany konfiguracji testu ---
   const [selectedModel, setSelectedModel] = useState(""); // Wybrany model LLM
   const [complexity, setComplexity] = useState("medium"); // Poziom złożoności testu ("quick", "medium", "complex")
-  
+
   // --- Stany wykonania testu ---
   const [running, setRunning] = useState(false); // Czy test jest w toku
   const [progress, setProgress] = useState(0); // Procentowy stan postępu testu (0-100)
   const [statusMessage, setStatusMessage] = useState("Skonfiguruj i uruchom testy poniżej."); // Tekst statusowy pod paskiem postępu
   const [consoleLogs, setConsoleLogs] = useState([]); // Logi wypisywane w czarnej konsoli wirtualnej
   const [runResult, setRunResult] = useState(null); // Rezultat ostatnio ukończonego testu
-  
+
   // Referencja do kontenera logów konsoli
   const consoleEndRef = useRef(null);
 
@@ -37,12 +38,12 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
     setRunning(true);
     setProgress(0);
     setRunResult(null);
-    setConsoleLogs(["[SYSTEM] Inicjalizacja testu LLM..."]);
+    setConsoleLogs(["Inicjalizacja testu LLM..."]);
     setStatusMessage("Test wydajności LLM rozpoczęty...");
 
     try {
       // Wysłanie zapytania POST w celu zainicjowania strumieniowania SSE
-      const response = await fetch("http://127.0.0.1:8000/api/benchmark/run-stream", {
+      const response = await fetch(`${API_URL}/api/benchmark/run-stream`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -79,7 +80,7 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
           try {
             // Parsowanie obiektu payload z linii "data: {JSON}"
             const payload = JSON.parse(trimmed.substring(6));
-            
+
             // Logowanie komunikatów z postępu
             if (payload.message) {
               const isSystem = payload.step.includes("error") || payload.step.includes("warning") || payload.step === "finished";
@@ -114,15 +115,15 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
 
   return (
     <div className="animate-fade-in" style={{ display: "flex", flexDirection: "column", gap: "30px" }}>
-      
+
       <div className="benchmark-layout">
-        
+
         {/* Lewa kolumna: Konfiguracja i wybór modelu */}
         <div className="benchmark-controls-card glass-panel">
           <h3 style={{ fontSize: "18px", fontWeight: "700", borderBottom: "1px solid var(--border-color)", paddingBottom: "12px" }}>
             Konfiguracja testu LLM
           </h3>
-          
+
           <div className="control-group">
             <span className="control-label">Wybrany test</span>
             <div style={{ fontSize: "14px", fontWeight: "600", color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
@@ -258,63 +259,63 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
                     🤖 Ollama — Czasy wnioskowania (verbose)
                   </td>
                 </tr>
-                <MetricRow 
-                  label="total duration (Czas całkowity)" 
+                <MetricRow
+                  label="total duration (Czas całkowity)"
                   description="Całkowity czas od wysłania pytania do zakończenia odpowiedzi."
                   interpretation="less_better"
-                  unit="s" 
-                  value={runResult.results.ollama.total_time_sec} 
+                  unit="s"
+                  value={runResult.results.ollama.total_time_sec}
                 />
-                <MetricRow 
-                  label="load duration (Czas ładowania modelu)" 
+                <MetricRow
+                  label="load duration (Czas ładowania modelu)"
                   description="Czas potrzebny na wczytanie wag modelu LLM do pamięci RAM/VRAM."
                   interpretation="less_better"
-                  unit="s" 
-                  value={runResult.results.ollama.load_duration_sec} 
+                  unit="s"
+                  value={runResult.results.ollama.load_duration_sec}
                 />
-                <MetricRow 
-                  label="prompt eval count (Tokeny promptu)" 
+                <MetricRow
+                  label="prompt eval count (Tokeny promptu)"
                   description="Liczba tokenów (słów/części słów) w pytaniu wejściowym."
                   interpretation="neutral"
-                  unit="token" 
-                  value={runResult.results.ollama.prompt_eval_count} 
+                  unit="token"
+                  value={runResult.results.ollama.prompt_eval_count}
                 />
-                <MetricRow 
-                  label="prompt eval duration (Czas czytania promptu)" 
+                <MetricRow
+                  label="prompt eval duration (Czas czytania promptu)"
                   description="Czas spędzony przez model na przetworzenie i zrozumienie pytania."
                   interpretation="less_better"
-                  unit="s" 
-                  value={runResult.results.ollama.prompt_eval_duration_sec} 
+                  unit="s"
+                  value={runResult.results.ollama.prompt_eval_duration_sec}
                 />
-                <MetricRow 
-                  label="prompt eval rate (Szybkość czytania pytania)" 
+                <MetricRow
+                  label="prompt eval rate (Szybkość czytania pytania)"
                   description="Prędkość przetwarzania tekstu wejściowego (promptu) przez model."
                   interpretation="more_better"
-                  unit="token/s" 
-                  value={runResult.results.ollama.prompt_eval_tokens_per_sec} 
-                  highlight 
+                  unit="token/s"
+                  value={runResult.results.ollama.prompt_eval_tokens_per_sec}
+                  highlight
                 />
-                <MetricRow 
-                  label="eval count (Wygenerowane tokeny)" 
+                <MetricRow
+                  label="eval count (Wygenerowane tokeny)"
                   description="Liczba tokenów wygenerowanych przez model w odpowiedzi."
                   interpretation="neutral"
-                  unit="token" 
-                  value={runResult.results.ollama.tokens_generated} 
+                  unit="token"
+                  value={runResult.results.ollama.tokens_generated}
                 />
-                <MetricRow 
-                  label="eval duration (Czas generowania)" 
+                <MetricRow
+                  label="eval duration (Czas generowania)"
                   description="Czas spędzony przez model na faktycznym generowaniu odpowiedzi token po tokenie."
                   interpretation="less_better"
-                  unit="s" 
-                  value={runResult.results.ollama.eval_duration_sec} 
+                  unit="s"
+                  value={runResult.results.ollama.eval_duration_sec}
                 />
-                <MetricRow 
-                  label="eval rate (Szybkość generowania)" 
+                <MetricRow
+                  label="eval rate (Szybkość generowania)"
                   description="Główny wyznacznik wydajności. Prędkość tworzenia nowych tokenów odpowiedzi."
                   interpretation="more_better"
-                  unit="token/s" 
-                  value={runResult.results.ollama.tokens_per_sec} 
-                  highlight 
+                  unit="token/s"
+                  value={runResult.results.ollama.tokens_per_sec}
+                  highlight
                 />
 
                 {/* ── SEKCJA 2: GPU — nvidia-smi ── */}
@@ -332,26 +333,26 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
                       unit="MB"
                       value={`${runResult.results.ollama.gpu_vram_used_mb} / ${runResult.results.ollama.gpu_vram_total_mb}`}
                     />
-                    <MetricRow 
-                      label="Obciążenie GPU" 
+                    <MetricRow
+                      label="Obciążenie GPU"
                       description="Wykorzystanie rdzeni procesora karty graficznej podczas testu (powinno być wysokie przy akceleracji)."
                       interpretation="more_better"
-                      unit="%" 
-                      value={runResult.results.ollama.gpu_util_percent} 
+                      unit="%"
+                      value={runResult.results.ollama.gpu_util_percent}
                     />
-                    <MetricRow 
-                      label="Pobór mocy / limit mocy" 
+                    <MetricRow
+                      label="Pobór mocy / limit mocy"
                       description="Chwilowy pobór prądu przez kartę w stosunku do limitu TDP."
                       interpretation="neutral"
-                      unit="W" 
-                      value={`${runResult.results.ollama.gpu_power_draw_w} / ${runResult.results.ollama.gpu_power_limit_w}`} 
+                      unit="W"
+                      value={`${runResult.results.ollama.gpu_power_draw_w} / ${runResult.results.ollama.gpu_power_limit_w}`}
                     />
-                    <MetricRow 
-                      label="Temperatura GPU" 
+                    <MetricRow
+                      label="Temperatura GPU"
                       description="Temperatura rdzenia karty graficznej pod obciążeniem."
                       interpretation="less_better"
-                      unit="°C" 
-                      value={runResult.results.ollama.gpu_temp_c} 
+                      unit="°C"
+                      value={runResult.results.ollama.gpu_temp_c}
                     />
                   </>
                 )}
@@ -376,12 +377,12 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
                   unit="GB"
                   value={`${runResult.results.ollama.sys_ram_used_gb} / ${runResult.results.ollama.sys_ram_total_gb} (${runResult.results.ollama.sys_ram_percent}%)`}
                 />
-                <MetricRow 
-                  label="Obciążenie procesora (CPU)" 
+                <MetricRow
+                  label="Obciążenie procesora (CPU)"
                   description="Średnie wykorzystanie rdzeni głównego procesora komputera."
                   interpretation="less_better"
-                  unit="%" 
-                  value={runResult.results.ollama.sys_cpu_percent} 
+                  unit="%"
+                  value={runResult.results.ollama.sys_cpu_percent}
                 />
 
               </tbody>
@@ -393,8 +394,8 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
             <h4 style={{ fontSize: "15px", fontWeight: "700", marginBottom: "16px", color: "var(--accent-cyan)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
               Analiza wykorzystania pamięci i warstw modelu
             </h4>
-            <CompatibilityPanel 
-              specs={runResult.specs} 
+            <CompatibilityPanel
+              specs={runResult.specs}
               fixedModelName={runResult.results.ollama.model}
               hideSelectors={true}
               actualTps={runResult.results.ollama.tokens_per_sec}
@@ -407,10 +408,10 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
               <h4 style={{ fontSize: "15px", fontWeight: "700", marginBottom: "12px", color: "var(--accent-cyan)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
                 Wygenerowana odpowiedź testowa
               </h4>
-              <div style={{ 
-                padding: "16px", 
-                backgroundColor: "rgba(0, 0, 0, 0.25)", 
-                border: "1px solid var(--border-color)", 
+              <div style={{
+                padding: "16px",
+                backgroundColor: "rgba(0, 0, 0, 0.25)",
+                border: "1px solid var(--border-color)",
                 borderRadius: "6px",
                 fontFamily: "var(--font-mono)",
                 fontSize: "13px",
@@ -424,7 +425,7 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
               </div>
             </div>
           )}
-          
+
         </div>
       )}
 
@@ -436,7 +437,7 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
 function MetricRow({ label, description, interpretation, unit, value, highlight }) {
   let interpText = "";
   let interpColor = "var(--text-muted)";
-  
+
   if (interpretation === "less_better") {
     interpText = " (Im mniej, tym lepiej ⬇️)";
     interpColor = "var(--accent-red)";

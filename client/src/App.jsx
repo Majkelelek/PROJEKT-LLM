@@ -7,6 +7,7 @@ import ComparePanel from "./components/ComparePanel";
 import LoadingView from "./components/LoadingView";
 import OfflineView from "./components/OfflineView";
 import Sidebar from "./components/Sidebar";
+import { API_URL } from "./config";
 import "./App.css";
 
 export default function App() {
@@ -27,14 +28,14 @@ export default function App() {
     setBackendError(false);
     try {
       // 1. Pobieranie danych o systemie i aktualnych metrykach z backendu
-      const systemRes = await fetch("http://127.0.0.1:8000/api/system-info");
+      const systemRes = await fetch(`${API_URL}/api/system-info`);
       if (!systemRes.ok) throw new Error("Błąd API informacji o systemie backendu");
       const systemData = await systemRes.json();
       setSpecs(systemData.specs);
       setLiveMetrics(systemData.live_metrics);
 
       // 2. Pobieranie statusu i listy modeli z usługi Ollama poprzez backend
-      const ollamaRes = await fetch("http://127.0.0.1:8000/api/models");
+      const ollamaRes = await fetch(`${API_URL}/api/models`);
       if (ollamaRes.ok) {
         const ollamaData = await ollamaRes.json();
         setOllamaActive(ollamaData.ollama_active);
@@ -84,7 +85,7 @@ export default function App() {
   // Cykliczne sprawdzanie połączenia z serwerem i Ollamą w tle (co 5 sekund)
   const checkConnection = async () => {
     try {
-      const ollamaRes = await fetch("http://127.0.0.1:8000/api/models");
+      const ollamaRes = await fetch(`${API_URL}/api/models`);
       if (ollamaRes.ok) {
         const ollamaData = await ollamaRes.json();
         setOllamaActive(ollamaData.ollama_active);

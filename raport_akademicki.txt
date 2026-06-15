@@ -273,7 +273,14 @@ D. Diagramy UML (do wygenerowania i edycji w https://mermaid.live/):
 W celu zobrazowania architektury, przepływu danych oraz modelu obiektowego systemu, opracowano poniższe specyfikacje diagramów w standardzie Mermaid. Kod ten można bezpośrednio skopiować i wkleić w edytorze online pod adresem https://mermaid.live/ w celu wygenerowania i pobrania grafiki (np. w formacie PNG lub SVG).
 
 1. Diagram Architektury / Komponentów (Component Diagram)
-Pokazuje podział systemu na warstwę prezentacji (React/Vite), warstwę logiki (ASP.NET Core z serwisami) oraz interfejsy zewnętrzne i sprzętowe (Ollama API, WMI, nvidia-smi):
+Pokazuje podział systemu na warstwę prezentacji (React/Vite), warstwę logiki (ASP.NET Core z serwisami) oraz interfejsy zewnętrzne i sprzętowe (Ollama API, WMI, nvidia-smi).
+
+Opis tekstowy diagramu (jak opowiedzieć o nim odbiorcy):
+Ten diagram przedstawia trójwarstwową architekturę naszego systemu, podzieloną na warstwę prezentacji, warstwę logiki oraz warstwę niskopoziomową wraz z usługami zewnętrznymi.
+- Warstwa Prezentacji (Frontend) to aplikacja napisana w React i skompilowana przy użyciu Vite. Zawiera komponenty interfejsu użytkownika (UI) oraz lokalną pamięć przeglądarki (localStorage), w której przechowujemy historię przeprowadzonych testów. Zapis i odczyt odbywa się bezpośrednio z poziomu kodu React, dzięki czemu backend pozostaje bezstanowy.
+- Warstwa Logiki (Backend) bazuje na frameworku ASP.NET Core 8.0. Uruchamia ona Minimal APIs jako punkty końcowe (endpoints) i składa się z dwóch głównych serwisów: SystemInfoService (odpowiedzialnego za sprzęt i telemetrię) oraz OllamaClientService (odpowiedzialnego za orkiestrację testów LLM i integrację z lokalną sztuczną inteligencją).
+- Warstwa Niskopoziomowa oraz Usługi Zewnętrzne reprezentuje środowisko systemowe i zewnętrzne procesy. Mamy tutaj: lokalne API silnika Ollama (nasłuchujące na porcie 11434), interfejs Windows Management Instrumentation (WMI) do zapytań systemowych, narzędzie CLI nvidia-smi do pomiarów GPU oraz rejestr systemowy Windows.
+- Przepływy i komunikacja: Aplikacja React łączy się z backendem ASP.NET za pomocą zapytań HTTP i strumieniowania Server-Sent Events (SSE). Backend z kolei komunikuje się z Ollama API za pomocą zapytań REST JSON, odczytuje dane z rejestru Windows oraz wysyła zapytania WQL do usługi WMI, a także wywołuje narzędzie nvidia-smi, aby odczytać parametry karty graficznej w locie.
 
 ```mermaid
 flowchart TB
@@ -306,7 +313,22 @@ flowchart TB
 ```
 
 2. Diagram Sekwencji (Sequence Diagram) - Przepływ procesu benchmarkowania
-Ilustruje pełną interakcję asynchroniczną i strumieniowanie informacji za pomocą Server-Sent Events (SSE) podczas uruchamiania testu wydajności:
+Ilustruje pełną interakcję asynchroniczną i strumieniowanie informacji za pomocą Server-Sent Events (SSE) podczas uruchamiania testu wydajności.
+
+Opis tekstowy diagramu (jak opowiedzieć o nim odbiorcy):
+Ten diagram sekwencji przedstawia cały przepływ procesu benchmarkowania krok po kroku, pokazując interakcje i wymianę komunikatów w czasie między użytkownikiem, frontendem, backendem, silnikiem Ollama oraz usługą systemową SystemInfoService.
+1. Użytkownik inicjuje test, klikając przycisk "Uruchom Test" w interfejsie.
+2. Aplikacja React wysyła asynchroniczne żądanie HTTP POST `/api/benchmark/run-stream` do backendu z nazwą wybranego modelu i stopniem trudności promptu.
+3. Backend otwiera połączenie strumieniowe SSE (Server-Sent Events) i na bieżąco raportuje status operacji (np. "Sprawdzanie stanu Ollama...").
+4. Backend wysyła zapytanie testowe GET do silnika Ollama w celu weryfikacji jego gotowości. Po otrzymaniu statusu 200 OK, informuje frontend o przejściu do kolejnego kroku.
+5. Backend wysyła zapytanie do serwisu SystemInfoService, aby wykonać początkowy snapshot zużycia zasobów (CPU i RAM) przed obciążeniem.
+6. Następnie backend wysyła żądanie wykonania wnioskowania (generowania tekstu) do Ollamy poprzez endpoint POST `/api/generate` z flagą `stream: false`. Dzięki wyłączeniu strumieniowania po stronie Ollamy, silnik sam dokładnie mierzy czas generowania bezpośrednio na poziomie jądra sprzętowego.
+7. Po ukończeniu generowania, Ollama zwraca backendowi odpowiedź z surowymi metrykami czasowymi (podanymi w nanosekundach).
+8. W tym samym momencie backend wysyła zapytania do SystemInfoService, by natychmiast odczytać parametry obciążenia GPU (zużycie VRAM, pobór mocy, temperaturę) za pomocą nvidia-smi oraz pobrać końcowy snapshot systemu (RAM/CPU).
+9. Backend przelicza otrzymane dane z nanosekund na czytelne jednostki (np. tokeny na sekundę, sekundy opóźnienia do pierwszego tokena).
+10. Ponownie wywoływana jest Ollama, by na bazie zgromadzonych wyników telemetrycznych wygenerować tekstowy raport analityczny przy użyciu sztucznej inteligencji.
+11. Kompletne dane (wyniki, specyfikacja komputera oraz raport AI) są pakowane do jednego obiektu JSON i wysyłane strumieniem SSE do frontendu z typem zdarzenia "completed".
+12. Aplikacja React zapisuje otrzymany wynik w lokalnej pamięci (localStorage) i prezentuje go w czytelny sposób użytkownikowi na ekranie.
 
 ```mermaid
 sequenceDiagram
@@ -351,7 +373,15 @@ sequenceDiagram
 ```
 
 3. Diagram Klas i Struktur Danych (Class Diagram)
-Przedstawia model obiektowy backendu, klasy DTO (Data Transfer Objects) przesyłane do frontendu oraz główne serwisy aplikacyjne:
+Diagram klas i struktur danych przedstawia model pojęciowo-obiektowy zaimplementowany w kodzie backendu, relacje pomiędzy obiektami DTO (Data Transfer Objects) oraz zależności pomiędzy głównymi serwisami systemowymi.
+- Główną klasą agregującą dane o wykonanym teście jest BenchmarkRun. Posiada ona unikalny identyfikator (Guid), czas wykonania (Timestamp), nazwę modelu, stopień złożoności, wygenerowany przez sztuczną inteligencję raport (AiReport) oraz referencje do dwóch innych obiektów: SystemSpecs i BenchmarkResults.
+- SystemSpecs definiuje statyczną konfigurację sprzętową komputera zebraną podczas startu systemu. Zawiera typ systemu operacyjnego, model procesora, liczbę rdzeni fizycznych i logicznych, całkowitą pamięć RAM oraz listę zainstalowanych kart graficznych (lista obiektów GpuDetail z ich nazwami i rozmiarem pamięci VRAM).
+- BenchmarkResults przechemowuje wyniki samego benchmarku, zawierając w sobie obiekt OllamaResult.
+- OllamaResult to szczegółowa struktura zawierająca pomiary czasowe (czas całkowity, opóźnienie TTFT, szybkość tokenów na sekundę, czas ładowania modelu, czas ewaluacji promptu) oraz pomiary telemetryczne zebrane w trakcie testu (zużycie VRAM, obciążenie GPU, pobór mocy, temperaturę GPU, zużycie pamięci RAM, obciążenie CPU), a także nowo wprowadzone metadane pobierane na żywo z modelu w Ollamie: ParameterSize (rozmiar parametrów), QuantizationLevel (stopień kwantyzacji) oraz Family (rodzina modelu).
+- Klasa LiveMetrics reprezentuje dane dynamiczne, odpytywane cyklicznie co 1,5 sekundy niezależnie od testu, w celu pokazywania bieżącego wykresu obciążenia CPU (globalnie i dla każdego rdzenia z osobna) oraz pamięci RAM.
+- SystemInfoService to serwis dostarczający dane systemowe i telemetryczne (odczyt specyfikacji, live metrics, obsługa nvidia-smi i snapshotów).
+- OllamaClientService to serwis kliencki odpowiedzialny za komunikację z silnikiem Ollama. Zarządza pobieraniem listy modeli, uruchamianiem benchmarku oraz generowaniem raportu AI. Serwis ten bezpośrednio korzysta z SystemInfoService, aby móc sparować metryki generowania tekstu z rzeczywistym stanem obciążenia sprzętu.
+- Klasa OllamaModelInfo reprezentuje szczegółowe informacje o modelach zainstalowanych lokalnie, zwracane przez serwis OllamaClientService w celu ich dynamicznego parsowania w frontendzie.
 
 ```mermaid
 classDiagram
@@ -411,6 +441,16 @@ classDiagram
         +double SysRamTotalGb
         +double SysRamPercent
         +double SysCpuPercent
+        +string ParameterSize
+        +string QuantizationLevel
+        +string Family
+    }
+
+    class OllamaModelInfo {
+        +string Name
+        +string ParameterSize
+        +string QuantizationLevel
+        +string Family
     }
 
     class SystemInfoService {
@@ -423,7 +463,8 @@ classDiagram
     class OllamaClientService {
         -HttpClient _httpClient
         -SystemInfoService _sysInfo
-        +GetModelsAsync() Task~List~string~~
+        +GetOllamaModelsAsync() Task~List~string~~
+        +GetOllamaModelsDetailedAsync() Task~List~OllamaModelInfo~~
         +RunLlmBenchmarkAsync(string model, string complexity) Task~OllamaResult~
         +GenerateAiReportAsync(OllamaResult metrics, SystemSpecs specs) Task~string~
     }
@@ -433,6 +474,7 @@ classDiagram
     BenchmarkResults --> OllamaResult : "zawiera"
     SystemSpecs "1" *-- "many" GpuDetail : "posiada"
     OllamaClientService ..> SystemInfoService : "korzysta z"
+    OllamaClientService ..> OllamaModelInfo : "zwraca listę"
 ```
 
 

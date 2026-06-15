@@ -1,3 +1,5 @@
+import { API_URL } from "../config";
+
 // Komponent OfflineView wyświetlający ekran diagnostyczny w przypadku braku połączenia z backendem .NET.
 export default function OfflineView({ onRetry }) {
   return (
@@ -7,7 +9,7 @@ export default function OfflineView({ onRetry }) {
         Backend Projekt AI jest Offline
       </h1>
       <p style={{ color: "var(--text-secondary)", maxWidth: "500px", lineHeight: "1.6" }}>
-        Nie udało się nawiązać połączenia z serwerem ASP.NET Core (.NET 8). Upewnij się, że serwer działa na lokalnym porcie 8000.
+        Nie udało się nawiązać połączenia z serwerem ASP.NET Core (.NET 8). Upewnij się, że serwer działa pod adresem {API_URL}.
       </p>
       {/* Kod pomocniczy ułatwiający użytkownikowi uruchomienie serwera z konsoli */}
       <div style={{ padding: "16px", background: "rgba(255,255,255,0.02)", border: "1px solid var(--border-color)", borderRadius: "8px", fontFamily: "var(--font-mono)", fontSize: "14px", color: "var(--accent-cyan)", textAlign: "left" }}>
