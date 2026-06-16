@@ -161,19 +161,19 @@ namespace ProjektAI.Backend.Services
             switch (complexity?.ToLower())
             {
                 case "quick":
-                    prompt = "Wyjaśnij w jednym zdaniu, czym jest sztuczna inteligencja.";
-                    numPredict = 1200;
+                    prompt = "Wyjaśnij w jednym zdaniu, czym jest sztuczna inteligencja. Pisz poprawnie po polsku, krótko i bez powtórzeń.";
+                    numPredict = 150;
                     temp = 0.1;
                     break;
                 case "complex":
-                    prompt = "Napisz wyczerpujący i szczegółowy artykuł na temat ewolucji mikroprocesorów od lat 70. do dziś, wyjaśniając różnice między architekturami CISC a RISC, x86 a ARM oraz znaczenie rozszerzeń wektorowych AVX i rdzeni Tensor w nowoczesnym wnioskowaniu sztucznej inteligencji. Artykuł powinien mieć co najmniej 5 akapitów.";
-                    numPredict = 15000;
+                    prompt = "Napisz wyczerpujący i szczegółowy artykuł na temat ewolucji mikroprocesorów od lat 70. do dziś, wyjaśniając różnice między architekturami CISC a RISC, x86 a ARM oraz znaczenie rozszerzeń wektorowych AVX i rdzeni Tensor w nowoczesnym wnioskowaniu sztucznej inteligencji. Artykuł powinien mieć co najmniej 5 akapitów. Dbaj o poprawność językową, pisz naturalną polszczyzną, unikaj powtórzeń zdań i zakończ tekst naturalnym podsumowaniem.";
+                    numPredict = 3000;
                     temp = 0.7;
                     break;
                 case "medium":
                 default:
-                    prompt = "Napisz krótki esej składający się z dwóch akapitów, wyjaśniający czym jest uczenie maszynowe (Machine Learning) oraz jak sieci neuronowe przetwarzają informacje.";
-                    numPredict = 6000;
+                    prompt = "Napisz krótki esej składający się z dwóch akapitów, wyjaśniający czym jest uczenie maszynowe (Machine Learning) oraz jak sieci neuronowe przetwarzają informacje. Zadbaj o poprawność językową, pisz naturalną polszczyzną i unikaj zbędnych powtórzeń.";
+                    numPredict = 1000;
                     temp = 0.4;
                     break;
             }
@@ -187,7 +187,9 @@ namespace ProjektAI.Backend.Services
                 {
                     temperature = temp,
                     num_predict = numPredict,
-                    num_gpu = -1 // Pozwól Ollamie zdecydować o automatycznym podziale warstw na GPU/CPU
+                    num_gpu = -1, // Pozwól Ollamie zdecydować o automatycznym podziale warstw na GPU/CPU
+                    repeat_penalty = 1.15f,
+                    repeat_last_n = 64
                 }
             };
 
@@ -393,7 +395,7 @@ namespace ProjektAI.Backend.Services
             {
                 case "quick":
                     prompt = $@"
-Jesteś ekspert ds. sprzętu komputerowego.
+Jesteś ekspertem ds. sprzętu komputerowego.
 Przeanalizuj poniższe specyfikacje komputera oraz wyniki testu wydajności wnioskowania lokalnego LLM i napisz KRÓTKIE podsumowanie (maksymalnie 3 zdania) po polsku oceniające ten sprzęt pod AI.
 
 ### SPECYFIKACJA SYSTEMU
@@ -404,6 +406,8 @@ Przeanalizuj poniższe specyfikacje komputera oraz wyniki testu wydajności wnio
 
 ### WYNIKI TESTU LLM
 - Wnioskowanie (Ollama - {testedModel}): {tps} t/s, TTFT: {latency}s.{sysMetricsInfo}{gpuUsageInfo}
+
+Zadbaj o poprawną polszczyznę i ortografię. Pisz zwięźle i nie powtarzaj tych samych informacji.
 ";
                     numPredict = 150;
                     temp = 0.1;
@@ -423,6 +427,8 @@ Opisz ogólną klasę sprzętu pod AI, zidentyfikuj główne wąskie gardła i p
 
 ### WYNIKI TESTU LLM
 - Wnioskowanie (Ollama - {testedModel}): {tps} t/s, TTFT: {latency}s.{sysMetricsInfo}{gpuUsageInfo}
+
+Raport musi być napisany poprawną, naturalną polszczyzną, dbając o gramatykę i poprawną pisownię. Unikaj powtórzeń i niepotrzebnego lania wody.
 ";
                     numPredict = 500;
                     temp = 0.3;
@@ -456,6 +462,7 @@ Wygeneruj pięknie sformatowany raport w formacie Markdown zawierający:
 5. **Najlepsze zastosowania**: Do jakich zadań AI ten komputer nadaje się najlepiej (np. lekkie modele 3B, chat, RAG, asystent kodowania).
 
 Raport musi być w całości napisany w języku polskim. Użyj profesjonalnego, obiektywnego i rzeczowego tonu. Unikaj pustych szablonów tekstowych. Stosuj czysty Markdown.
+Zadbaj o nienaganną poprawność gramatyczną, ortograficzną i interpunkcyjną. Pisz naturalnie i unikaj powtarzania tych samych zdań oraz zbędnych informacji.
 ";
                     numPredict = 1200;
                     temp = 0.5;
@@ -471,7 +478,9 @@ Raport musi być w całości napisany w języku polskim. Użyj profesjonalnego, 
                 {
                     temperature = temp,
                     num_predict = numPredict,
-                    num_gpu = -1
+                    num_gpu = -1,
+                    repeat_penalty = 1.15f,
+                    repeat_last_n = 64
                 }
             };
 

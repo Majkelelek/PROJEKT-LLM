@@ -302,7 +302,17 @@ heurystyk ani wartości domyślnych:
    o konieczności uruchomienia testu. żadna wartość nie jest szacowana ani
    prognozowana na podstawie specyfikacji sprzętu.
 
-D. Diagramy UML (do wygenerowania i edycji w https://mermaid.live/):
+D. Optymalizacja i stabilizacja wnioskowania LLM:
+W celu zapewnienia bezawaryjnego działania aplikacji oraz wysokiej jakości generowanych treści, zaimplementowano zaawansowane mechanizmy stabilizacji generowania tekstu na backendzie:
+1. Zabezpieczenie przed zapętleniem (Loop Prevention):
+   - Wdrożenie parametrów antyrepetycyjnych do API Ollamy (`repeat_penalty = 1.15f` oraz `repeat_last_n = 64`), co skutecznie zapobiega powtarzaniu fraz i wpadaniu modelu w nieskończone pętle generowania.
+   - Optymalizacja parametru limitu tokenów (`num_predict`). Poprzednie, zbyt wysokie limity (np. 15 000 tokenów) zastąpiono racjonalnymi limitami górnymi (np. 150 tokenów dla testu szybkiego, 1000 dla średniego, 3000 dla złożonego) dopasowanymi do oczekiwanej długości tekstu. Uniemożliwia to zablokowanie zasobów sprzętowych przy niespodziewanym zapętleniu.
+   - Wprowadzenie jawnych negatywnych reguł w promptach, nakazujących modelowi natychmiastowe zakończenie generowania po zrealizowaniu zadań i zakazujących powtórzeń informacji.
+2. Zapewnienie poprawności językowej (Polish Language Enforcement):
+   - Skorygowanie i wyczyszczenie błędów językowych w promptach systemowych i szablonach oceny (np. korekta frazy "Jesteś ekspert ds." na poprawną formę "Jesteś ekspertem ds." oraz poprawa błędów deklinacji w promptach). Wyeliminowanie błędów w promptach zapobiega ich powielaniu przez model.
+   - Dodanie do każdego promptu instrukcji rygoru poprawności językowej, nakazujących modelowi stosowanie poprawnej polskiej ortografii, interpunkcji i gramatyki oraz unikanie kalk językowych z języka angielskiego na rzecz naturalnej polskiej terminologii technicznej.
+
+E. Diagramy UML (do wygenerowania i edycji w https://mermaid.live/):
 W celu zobrazowania architektury, przepływu danych oraz modelu obiektowego systemu, opracowano poniższe specyfikacje diagramów w standardzie Mermaid. Kod ten można bezpośrednio skopiować i wkleić w edytorze online pod adresem https://mermaid.live/ w celu wygenerowania i pobrania grafiki (np. w formacie PNG lub SVG).
 
 1. Diagram Architektury / Komponentów (Component Diagram)
@@ -559,7 +569,11 @@ Walidacja potwierdza, czy aplikacja realizuje cele użytkownika w sposób prawid
      W przypadku braku informacji (np. niezidentyfikowanej kwantyzacji, braku pola
      parameter_size w odpowiedzi Ollamy, lub braku danych o RAM z WMI), odpowiedni
      wskaźnik wyświetla "Brak informacji" zamiast wyświetlać wartość szacowaną.
-     Eliminuje to ryzyko prezentacji użytkownikowi myślących lub nieprawdziwych liczb.
+     Eliminuje to ryzyko prezentacji użytkownikowi mylących lub nieprawdziwych liczb.
+4. Walidacja stabilności generowania i obrony przed zapętleniem (LLM Stabilization):
+   - Przeprowadzono testy zachowania modeli (m.in. lekkich modeli klasy 2B-3B) przy niskich temperaturach wnioskowania.
+   - Potwierdzono stabilizujące działanie kary za powtórzenia (`repeat_penalty = 1.15f`), co uniemożliwiło modelom wpadanie w zapętlone cykle generowania tej samej frazy.
+   - Zweryfikowano zachowanie systemu przy symulowanym zawieszeniu lub niekończącym się generowaniu przez model. Dzięki ograniczeniu limitu prognozy (`num_predict`), backend automatycznie zamyka połączenie i zwraca wyniki po osiągnięciu maksymalnego bezpiecznego limitu tokenów, chroniąc system przed wyciekami zasobów lub długotrwałym zablokowaniem wątków procesora i GPU.
 
 
 ================================================================================
