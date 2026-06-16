@@ -350,7 +350,10 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, fixed
 
         {/* Okrągły wskaźnik wyniku dopasowania i werdyktu */}
         <div className="glass-panel" style={{ padding: "24px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "space-between", gap: "20px" }}>
-          <h3 style={{ fontSize: "16px", fontWeight: "700", width: "100%", textAlign: "left" }}>Wynik dopasowania sprzętu</h3>
+          <div style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ fontSize: "16px", fontWeight: "700" }}>Wynik dopasowania sprzętu</h3>
+            <span style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--accent-amber)", background: "rgba(255, 234, 0, 0.15)", padding: "3px 8px", borderRadius: "3px", border: "1px solid rgba(255, 234, 0, 0.3)" }}>📊 Estymacja</span>
+          </div>
 
           <div style={{ position: "relative", width: "160px", height: "160px", display: "flex", justifyContent: "center", alignItems: "center" }}>
             <svg style={{ width: "150px", height: "150px", transform: "rotate(-90deg)" }}>
@@ -410,7 +413,10 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, fixed
         {/* Wizualizacja podziału warstw (Offloading) w postaci siatki komórek */}
         <div className="glass-panel" style={{ padding: "24px", display: "flex", flexDirection: "column", gap: "16px" }}>
           <div>
-            <h3 style={{ fontSize: "16px", fontWeight: "700" }}>Wizualizacja alokacji warstw modelu</h3>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+              <h3 style={{ fontSize: "16px", fontWeight: "700", margin: 0 }}>Wizualizacja alokacji warstw modelu</h3>
+              <span style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--accent-amber)", background: "rgba(255, 234, 0, 0.15)", padding: "3px 8px", borderRadius: "3px", border: "1px solid rgba(255, 234, 0, 0.3)" }}>Matematyczna estymacja</span>
+            </div>
             <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginTop: "4px" }}>
               Sieci LLM przetwarzane są warstwowo. Im więcej warstw trafi do pamięci VRAM GPU, tym wyższa szybkość wnioskowania.
             </p>
@@ -604,7 +610,10 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, fixed
 
         {/* Lista wskaźników dopasowania podzespołów */}
         <div className="glass-panel" style={{ padding: "24px" }}>
-          <h3 style={{ fontSize: "16px", fontWeight: "700", marginBottom: "16px" }}>Szczegółowy audyt kompatybilności</h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+            <h3 style={{ fontSize: "16px", fontWeight: "700", margin: 0 }}>Szczegółowy audyt kompatybilności</h3>
+            <span style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--accent-amber)", background: "rgba(255, 234, 0, 0.15)", padding: "3px 8px", borderRadius: "3px", border: "1px solid rgba(255, 234, 0, 0.3)" }}>Prognoza</span>
+          </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             {/* Audyt VRAM */}
@@ -698,9 +707,14 @@ export default function CompatibilityPanel({ specs, fixedModelName = null, fixed
 
         {/* Prognoza/Pomiar prędkości (t/s) w odniesieniu do średniej prędkości czytania */}
         <div className="glass-panel" style={{ padding: "24px", display: "flex", flexDirection: "column", justifyItems: "stretch", gap: "16px" }}>
-          <h3 style={{ fontSize: "16px", fontWeight: "700" }}>
-            {actualTps !== null ? "Rzeczywista szybkość generowania" : "Szybkość generowania"}
-          </h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ fontSize: "16px", fontWeight: "700", margin: 0 }}>
+              {actualTps !== null ? "Rzeczywista szybkość generowania" : "Szybkość generowania"}
+            </h3>
+            {actualTps === null && (
+              <span style={{ fontSize: "10px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.5px", color: "var(--accent-amber)", background: "rgba(255, 234, 0, 0.15)", padding: "3px 8px", borderRadius: "3px", border: "1px solid rgba(255, 234, 0, 0.3)" }}>Estymacja</span>
+            )}
+          </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: "12px", flexGrow: 1, justifyContent: "center" }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: "8px", justifyContent: "center" }}>
