@@ -55,8 +55,7 @@ Zakres prac projektowych i implementacyjnych obejmował:
 4. Opracowanie modułu wizualizacji zgodności sprzętowej, prezentującego dane o alokacji
    pamięci (VRAM/RAM) modelu wyłącznie na podstawie rzeczywistych metadanych modelu
    pobieranych na żywo z silnika Ollama (rozmiar parametrów, rodzina, kwantyzacja).
-5. Przygotowanie modułu analitycznego AI generującego zindywidualizowany raport 
-   diagnostyczny na podstawie przeprowadzonych pomiarów.
+5. Opracowanie modułu eksportu danych, generującego przejrzyste raporty podsumowujące pomiary w formacie Markdown.
 6. Przeprowadzenie procesu weryfikacji i walidacji wdrożonych komponentów oprogramowania.
 
 
@@ -311,6 +310,14 @@ W celu zapewnienia bezawaryjnego działania aplikacji oraz wysokiej jakości gen
 2. Zapewnienie poprawności językowej (Polish Language Enforcement):
    - Skorygowanie i wyczyszczenie błędów językowych w promptach systemowych i szablonach oceny (np. korekta frazy "Jesteś ekspert ds." na poprawną formę "Jesteś ekspertem ds." oraz poprawa błędów deklinacji w promptach). Wyeliminowanie błędów w promptach zapobiega ich powielaniu przez model.
    - Dodanie do każdego promptu instrukcji rygoru poprawności językowej, nakazujących modelowi stosowanie poprawnej polskiej ortografii, interpunkcji i gramatyki oraz unikanie kalk językowych z języka angielskiego na rzecz naturalnej polskiej terminologii technicznej.
+3. Treść promptów testowych dla różnych poziomów złożoności (Benchmark Prompts):
+   W celu zapewnienia powtarzalności pomiarów przy zróżnicowanym stopniu obciążenia sprzętowego, w kodzie backendu zdefiniowano trzy standardowe prompty testowe:
+   - Poziom szybki (Quick / Easy):
+     "Wyjaśnij w jednym zdaniu, czym jest sztuczna inteligencja. Pisz poprawnie po polsku, krótko i bez powtórzeń." (Limit: 150 tokenów, temperatura: 0.1).
+   - Poziom średni (Medium):
+     "Napisz krótki esej składający się z dwóch akapitów, wyjaśniający czym jest uczenie maszynowe (Machine Learning) oraz jak sieci neuronowe przetwarzają informacje. Zadbaj o poprawność językową, pisz naturalną polszczyzną i unikaj zbędnych powtórzeń." (Limit: 1000 tokenów, temperatura: 0.4).
+   - Poziom złożony (Complex / Hard):
+     "Napisz wyczerpujący i szczegółowy artykuł na temat ewolucji mikroprocesorów od lat 70. do dziś, wyjaśniający różnice między architekturami CISC a RISC, x86 a ARM oraz znaczenie rozszerzeń wektorowych AVX i rdzeni Tensor w nowoczesnym wnioskowaniu sztucznej inteligencji. Artykuł powinien mieć co najmniej 5 akapitów. Dbaj o poprawność językową, pisz naturalną polszczyzną, unikaj powtórzeń zdań i zakończ tekst naturalnym podsumowaniem." (Limit: 3000 tokenów, temperatura: 0.7).
 
 E. Diagramy UML (do wygenerowania i edycji w https://mermaid.live/):
 W celu zobrazowania architektury, przepływu danych oraz modelu obiektowego systemu, opracowano poniższe specyfikacje diagramów w standardzie Mermaid. Kod ten można bezpośrednio skopiować i wkleić w edytorze online pod adresem https://mermaid.live/ w celu wygenerowania i pobrania grafiki (np. w formacie PNG lub SVG).
@@ -373,9 +380,8 @@ Ten diagram sekwencji przedstawia cały przepływ procesu benchmarkowania krok p
    zapisywane są wartości szczytowe (peak): zużycie VRAM, obciążenie GPU, pobrór mocy i temperatura.
    Po zakończeniu generowania pętla jest przerywana przez `CancellationTokenSource`.
 9. Backend przelicza otrzymane dane z nanosekund na czytelne jednostki (np. tokeny na sekundę, sekundy opóźnienia do pierwszego tokena).
-10. Ponownie wywoływana jest Ollama, by na bazie zgromadzonych wyników telemetrycznych wygenerować tekstowy raport analityczny przy użyciu sztucznej inteligencji.
-11. Kompletne dane (wyniki, specyfikacja komputera oraz raport AI) są pakowane do jednego obiektu JSON i wysyłane strumieniem SSE do frontendu z typem zdarzenia "completed".
-12. Aplikacja React zapisuje otrzymany wynik w lokalnej pamięci (localStorage) i prezentuje go w czytelny sposób użytkownikowi na ekranie.
+10. Kompletne dane (wyniki, specyfikacja komputera) są pakowane do jednego obiektu JSON i wysyłane strumieniem SSE do frontendu z typem zdarzenia "completed".
+11. Aplikacja React zapisuje otrzymany wynik w lokalnej pamięci (localStorage) i prezentuje go w czytelny sposób użytkownikowi na ekranie.
 
 ```mermaid
 sequenceDiagram
@@ -413,25 +419,21 @@ sequenceDiagram
     S-->>B: Finalny Snapshot
 
     Note over B: Obliczenie metryk (Tokens/s, TTFT, Load time)
-    Note over B: Inicjalizacja generowania raportu AI (Analyst)
-    B->>O: POST /api/generate (prompt z danymi telemetrii)
-    O-->>B: Wygenerowany raport Markdown (ai_report)
-
     Note over B: Agregacja do obiektu BenchmarkRun
     B-->>F: SSE: status="completed", run=BenchmarkRun (JSON)
     Note over F: Zapis wyniku do localStorage
-    F-->>Użytkownik: Prezentacja wyników i raportu AI w UI
+    F-->>Użytkownik: Prezentacja wyników w UI
 ```
 
 3. Diagram Klas i Struktur Danych (Class Diagram)
 Diagram klas i struktur danych przedstawia model pojęciowo-obiektowy zaimplementowany w kodzie backendu, relacje pomiędzy obiektami DTO (Data Transfer Objects) oraz zależności pomiędzy głównymi serwisami systemowymi.
-- Główną klasą agregującą dane o wykonanym teście jest BenchmarkRun. Posiada ona unikalny identyfikator (Guid), czas wykonania (Timestamp), nazwę modelu, stopień złożoności, wygenerowany przez sztuczną inteligencję raport (AiReport) oraz referencje do dwóch innych obiektów: SystemSpecs i BenchmarkResults.
+- Główną klasą agregującą dane o wykonanym teście jest BenchmarkRun. Posiada ona unikalny identyfikator (Guid), czas wykonania (Timestamp), nazwę modelu, stopień złożoności, pole raportu (AiReport - zachowane jako puste w celu utrzymania kompatybilności wstecznej) oraz referencje do dwóch innych obiektów: SystemSpecs i BenchmarkResults.
 - SystemSpecs definiuje statyczną konfigurację sprzętową komputera zebraną podczas startu systemu. Zawiera typ systemu operacyjnego, model procesora, liczbę rdzeni fizycznych i logicznych, całkowitą pamięć RAM oraz listę zainstalowanych kart graficznych (lista obiektów GpuDetail z ich nazwami i rozmiarem pamięci VRAM).
 - BenchmarkResults przechemowuje wyniki samego benchmarku, zawierając w sobie obiekt OllamaResult.
 - OllamaResult to szczegółowa struktura zawierająca pomiary czasowe (czas całkowity, opóźnienie TTFT, szybkość tokenów na sekundę, czas ładowania modelu, czas ewaluacji promptu) oraz pomiary telemetryczne zebrane w trakcie testu (zużycie VRAM, obciążenie GPU, pobór mocy, temperaturę GPU, zużycie pamięci RAM, obciążenie CPU), a także nowo wprowadzone metadane pobierane na żywo z modelu w Ollamie: ParameterSize (rozmiar parametrów), QuantizationLevel (stopień kwantyzacji) oraz Family (rodzina modelu).
 - Klasa LiveMetrics reprezentuje dane dynamiczne, odpytywane cyklicznie co 1,5 sekundy niezależnie od testu, w celu pokazywania bieżącego wykresu obciążenia CPU (globalnie i dla każdego rdzenia z osobna) oraz pamięci RAM.
 - SystemInfoService to serwis dostarczający dane systemowe i telemetryczne (odczyt specyfikacji, live metrics, obsługa nvidia-smi i snapshotów).
-- OllamaClientService to serwis kliencki odpowiedzialny za komunikację z silnikiem Ollama. Zarządza pobieraniem listy modeli, uruchamianiem benchmarku oraz generowaniem raportu AI. Serwis ten bezpośrednio korzysta z SystemInfoService, aby móc sparować metryki generowania tekstu z rzeczywistym stanem obciążenia sprzętu.
+- OllamaClientService to serwis kliencki odpowiedzialny za komunikację z silnikiem Ollama. Zarządza pobieraniem listy modeli oraz uruchamianiem benchmarku. Serwis ten bezpośrednio korzysta z SystemInfoService, aby móc sparować metryki generowania tekstu z rzeczywistym stanem obciążenia sprzętu.
 - Klasa OllamaModelInfo reprezentuje szczegółowe informacje o modelach zainstalowanych lokalnie, zwracane przez serwis OllamaClientService w celu ich dynamicznego parsowania w frontendzie.
 
 ```mermaid
@@ -464,7 +466,6 @@ classDiagram
         +string Complexity
         +SystemSpecs Specs
         +BenchmarkResults Results
-        +string AiReport
     }
 
     class BenchmarkResults {
@@ -517,7 +518,6 @@ classDiagram
         +GetOllamaModelsAsync() Task~List~string~~
         +GetOllamaModelsDetailedAsync() Task~List~OllamaModelInfo~~
         +RunLlmBenchmarkAsync(string model, string complexity) Task~OllamaResult~
-        +GenerateAiReportAsync(OllamaResult metrics, SystemSpecs specs) Task~string~
     }
 
     BenchmarkRun --> SystemSpecs : "zawiera"

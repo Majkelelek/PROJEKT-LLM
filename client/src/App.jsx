@@ -122,7 +122,7 @@ export default function App() {
       console.error("Nie udało się zapisać przebiegu testu w localStorage:", e);
     }
     
-    // Ustawiamy ten bieg jako aktywny i przełączamy automatycznie na kartę raportu AI
+    // Ustawiamy ten bieg jako aktywny i przełączamy automatycznie na kartę szczegółowych wyników
     setActiveRun(completedRun);
     setActiveTab("analysis");
   };
@@ -130,7 +130,7 @@ export default function App() {
   // Obsługa wybrania historycznego rekordu z tabeli wyników
   const handleSelectHistoryRun = (run) => {
     setActiveRun(run);
-    setActiveTab("analysis"); // Ładujemy raport AI oraz szczegółowe metryki wczytanego testu
+    setActiveTab("analysis"); // Ładujemy szczegółowe metryki wczytanego testu
   };
 
   // Ekran błędu - serwer backend offline
@@ -161,14 +161,14 @@ export default function App() {
             <h1>
               {activeTab === "dashboard" && "Panel Systemu"}
               {activeTab === "benchmark" && "Zestaw Testów Wydajności"}
-              {activeTab === "analysis" && "Ekspercka Ocena AI"}
+              {activeTab === "analysis" && "Szczegółowe Wyniki Testu"}
               {activeTab === "compare" && "Porównanie Wyników"}
               {activeTab === "history" && "Logi Wyników Wydajności"}
             </h1>
             <span className="header-subtitle">
               {activeTab === "dashboard" && "Śledzenie specyfikacji w czasie rzeczywistym i telemetria zasobów."}
               {activeTab === "benchmark" && "Uruchom test wydajności lokalnych modeli językowych (LLM)."}
-              {activeTab === "analysis" && "Raport o wąskich gardłach wydajności i rekomendacje uaktualnień przygotowane przez LLM Ollama."}
+              {activeTab === "analysis" && "Szczegółowe wyniki pomiarów wydajności oraz analiza alokacji pamięci."}
               {activeTab === "compare" && "Zestaw ze sobą dwa testy, aby bezpośrednio porównać ich wydajność i parametry."}
               {activeTab === "history" && "Przeglądaj historię wyników, eksportuj i usuwaj wpisy."}
             </span>

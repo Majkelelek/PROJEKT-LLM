@@ -175,9 +175,9 @@ export default function BenchmarkPanel({ ollamaActive, models, onBenchmarkComple
               disabled={running}
               onChange={(e) => setComplexity(e.target.value)}
             >
-              <option value="quick">Szybkie (krótkie pytania, minimalny raport)</option>
-              <option value="medium">Średnie (ogólne testy, standardowy raport)</option>
-              <option value="complex">Złożone (głębokie artykuły, pełny raport)</option>
+              <option value="quick">Szybkie (krótkie pytania, minimalna liczba tokenów)</option>
+              <option value="medium">Średnie (ogólne testy, standardowa liczba tokenów)</option>
+              <option value="complex">Złożone (głębokie artykuły, maksymalna liczba tokenów)</option>
             </select>
           </div>
 

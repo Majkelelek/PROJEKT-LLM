@@ -62,13 +62,59 @@ export default function HistoryPanel({ onSelectRun, activeRunId }) {
     document.body.removeChild(element);
   };
 
-  // Eksport wygenerowanego raportu AI w formacie tekstowym Markdown (.md)
+  // Eksport wygenerowanego raportu w formacie tekstowym Markdown (.md)
   const handleDownloadMarkdown = (run, e) => {
     e.stopPropagation();
+    if (!run) return;
     const dateStr = new Date(run.timestamp).toLocaleDateString().replace(/\//g, "-");
-    const filename = `Projekt_AI_Raport_${dateStr}.md`;
+    const filename = `Projekt_AI_Wyniki_${dateStr}.md`;
+
+    const o = run.results?.ollama;
+    const specs = run.specs;
+    const gpusJoined = specs?.gpu_details ? specs.gpu_details.map(g => `${g.name} (${g.vram_gb} GB VRAM)`).join(", ") : (specs?.gpus ? specs.gpus.join(", ") : "Brak");
+
+    const md = `# Wyniki pomiarów wydajności AI - ${new Date(run.timestamp).toLocaleString()}
+
+## Specyfikacja Systemu
+- **System operacyjny**: ${specs?.os || "N/A"}
+- **Procesor (CPU)**: ${specs?.cpu_model || "N/A"} (${specs?.cpu_cores_physical || 0} rdzeni fizycznych, ${specs?.cpu_cores_logical || 0} wątków)
+- **Pamięć RAM**: ${specs?.ram_total_gb || 0} GB
+- **Karta graficzna**: ${gpusJoined}
+
+## Parametry Modelu i Testu
+- **Testowany model**: ${o?.model || run.selected_model || "N/A"}
+- **Złożoność testu**: ${run.complexity === "quick" ? "Szybki" : run.complexity === "complex" ? "Zaawansowany" : "Średni"}
+- **Rozmiar parametrów**: ${o?.parameter_size || "N/A"}
+- **Stopień kwantyzacji**: ${o?.quantization_level || "N/A"}
+- **Rodzina modelu**: ${o?.family || "N/A"}
+
+## Wyniki Wydajności (Czasy wnioskowania)
+- **Szybkość generowania (eval rate)**: ${o?.tokens_per_sec || 0} tokenów/sekundę
+- **Szybkość czytania promptu (prompt eval rate)**: ${o?.prompt_eval_tokens_per_sec || 0} tokenów/sekundę
+- **Czas przetwarzania promptu (prompt eval duration)**: ${o?.prompt_eval_duration_sec || 0} s
+- **Liczba tokenów promptu (prompt eval count)**: ${o?.prompt_eval_count || 0} tokenów
+- **Opóźnienie do pierwszego tokenu (TTFT / latency)**: ${o?.latency_sec || 0} s
+- **Czas ładowania modelu (load duration)**: ${o?.load_duration_sec || 0} s
+- **Wygenerowane tokeny (eval count)**: ${o?.tokens_generated || 0} tokenów
+- **Czas generowania (eval duration)**: ${o?.eval_duration_sec || 0} s
+- **Czas całkowity (total duration)**: ${o?.total_time_sec || 0} s
+
+## Telemetria Zasobów (Wartości szczytowe)
+${o?.gpu_metrics_available ? `- **Zużycie VRAM**: ${o.gpu_vram_used_mb} / ${o.gpu_vram_total_mb} MB
+- **Obciążenie GPU**: ${o.gpu_util_percent}%
+- **Średni pobór mocy**: ${o.gpu_power_draw_w} W / ${o.gpu_power_limit_w} W
+- **Temperatura GPU**: ${o.gpu_temp_c} °C` : "- **Metryki GPU**: Niedostępne (brak dedykowanej karty graficznej NVIDIA lub sterowników)"}
+- **Użycie pamięci RAM**: ${o?.sys_ram_used_gb} / ${o?.sys_ram_total_gb} GB (${o?.sys_ram_percent}%)
+- **Średnie obciążenie CPU**: ${o?.sys_cpu_percent}%
+
+## Wygenerowana odpowiedź testowa
+\`\`\`
+${o?.response || ""}
+\`\`\`
+`;
+
     const element = document.createElement("a");
-    const file = new Blob([run.ai_report], { type: "text/markdown" });
+    const file = new Blob([md], { type: "text/markdown" });
     element.href = URL.createObjectURL(file);
     element.download = filename;
     document.body.appendChild(element);
@@ -174,7 +220,7 @@ export default function HistoryPanel({ onSelectRun, activeRunId }) {
                 <div className="history-actions">
                   <button 
                     className="icon-btn" 
-                    title="Eksportuj raport Markdown"
+                    title="Eksportuj wyniki (Markdown)"
                     onClick={(e) => handleDownloadMarkdown(run, e)}
                   >
                     📝

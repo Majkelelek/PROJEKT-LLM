@@ -1,186 +1,65 @@
 import CompatibilityPanel from "./CompatibilityPanel";
 
-// Komponent AIAnalyst wyświetlający ekspercką ocenę AI wygenerowaną przez LLM Ollama wraz z wbudowanym parserem Markdown i pobieraniem.
+// Komponent AIAnalyst wyświetlający szczegółowe wyniki pomiarów wydajności, alokacji warstw i parametrów testu
 export default function AIAnalyst({ currentRun }) {
-  // Funkcja eksportująca treść raportu AI do pliku tekstowego Markdown (.md)
+  // Funkcja eksportująca treść raportu ze wszystkimi metrykami pomiarów do pliku tekstowego Markdown (.md)
   const downloadReport = () => {
     if (!currentRun) return;
     const dateStr = new Date(currentRun.timestamp).toLocaleDateString().replace(/\//g, "-");
-    const filename = `Projekt_AI_Raport_${dateStr}.md`;
+    const filename = `Projekt_AI_Wyniki_${dateStr}.md`;
     
+    const o = currentRun.results?.ollama;
+    const specs = currentRun.specs;
+    const gpusJoined = specs?.gpu_details ? specs.gpu_details.map(g => `${g.name} (${g.vram_gb} GB VRAM)`).join(", ") : (specs?.gpus ? specs.gpus.join(", ") : "Brak");
+
+    const md = `# Wyniki pomiarów wydajności AI - ${new Date(currentRun.timestamp).toLocaleString()}
+
+## Specyfikacja Systemu
+- **System operacyjny**: ${specs?.os || "N/A"}
+- **Procesor (CPU)**: ${specs?.cpu_model || "N/A"} (${specs?.cpu_cores_physical || 0} rdzeni fizycznych, ${specs?.cpu_cores_logical || 0} wątków)
+- **Pamięć RAM**: ${specs?.ram_total_gb || 0} GB
+- **Karta graficzna**: ${gpusJoined}
+
+## Parametry Modelu i Testu
+- **Testowany model**: ${o?.model || currentRun.selected_model || "N/A"}
+- **Złożoność testu**: ${currentRun.complexity === "quick" ? "Szybki" : currentRun.complexity === "complex" ? "Zaawansowany" : "Średni"}
+- **Rozmiar parametrów**: ${o?.parameter_size || "N/A"}
+- **Stopień kwantyzacji**: ${o?.quantization_level || "N/A"}
+- **Rodzina modelu**: ${o?.family || "N/A"}
+
+## Wyniki Wydajności (Czasy wnioskowania)
+- **Szybkość generowania (eval rate)**: ${o?.tokens_per_sec || 0} tokenów/sekundę
+- **Szybkość czytania promptu (prompt eval rate)**: ${o?.prompt_eval_tokens_per_sec || 0} tokenów/sekundę
+- **Czas przetwarzania promptu (prompt eval duration)**: ${o?.prompt_eval_duration_sec || 0} s
+- **Liczba tokenów promptu (prompt eval count)**: ${o?.prompt_eval_count || 0} tokenów
+- **Opóźnienie do pierwszego tokenu (TTFT / latency)**: ${o?.latency_sec || 0} s
+- **Czas ładowania modelu (load duration)**: ${o?.load_duration_sec || 0} s
+- **Wygenerowane tokeny (eval count)**: ${o?.tokens_generated || 0} tokenów
+- **Czas generowania (eval duration)**: ${o?.eval_duration_sec || 0} s
+- **Czas całkowity (total duration)**: ${o?.total_time_sec || 0} s
+
+## Telemetria Zasobów (Wartości szczytowe)
+${o?.gpu_metrics_available ? `- **Zużycie VRAM**: ${o.gpu_vram_used_mb} / ${o.gpu_vram_total_mb} MB
+- **Obciążenie GPU**: ${o.gpu_util_percent}%
+- **Średni pobór mocy**: ${o.gpu_power_draw_w} W / ${o.gpu_power_limit_w} W
+- **Temperatura GPU**: ${o.gpu_temp_c} °C` : "- **Metryki GPU**: Niedostępne (brak dedykowanej karty graficznej NVIDIA lub sterowników)"}
+- **Użycie pamięci RAM**: ${o?.sys_ram_used_gb} / ${o?.sys_ram_total_gb} GB (${o?.sys_ram_percent}%)
+- **Średnie obciążenie CPU**: ${o?.sys_cpu_percent}%
+
+## Wygenerowana odpowiedź testowa
+\`\`\`
+${o?.response || ""}
+\`\`\`
+`;
+
     // Utworzenie tymczasowego elementu hiperłącza z adresem blob i wywołanie kliknięcia pobierania
     const element = document.createElement("a");
-    const file = new Blob([currentRun.ai_report], { type: "text/markdown" });
+    const file = new Blob([md], { type: "text/markdown" });
     element.href = URL.createObjectURL(file);
     element.download = filename;
     document.body.appendChild(element);
     element.click();
     document.body.removeChild(element);
-  };
-
-  // Bezpieczny, lekki parser składni Markdown (nagłówki, listy, paragrafy) przetwarzający tekst linia po linii
-  const parseMarkdown = (markdown) => {
-    if (!markdown) return null;
-    
-    // Normalizujemy końce linii i dzielimy treść na linie
-    const lines = markdown.replace(/\r\n/g, "\n").split("\n");
-    const blocks = [];
-    let currentParagraphLines = [];
-    let currentList = null; // Przechowuje aktualnie budowaną listę: { type: 'ul' | 'ol', items: [] }
-
-    // Pomocnicza funkcja zatwierdzająca dotychczas nagromadzony akapit tekstu
-    const flushParagraph = (key) => {
-      if (currentParagraphLines.length > 0) {
-        blocks.push(
-          <p key={`p-${key}`}>
-            {parseInlineMarkdown(currentParagraphLines.join(" "))}
-          </p>
-        );
-        currentParagraphLines = [];
-      }
-    };
-
-    // Pomocnicza funkcja zatwierdzająca dotychczas budowaną listę
-    const flushList = (key) => {
-      if (currentList) {
-        const ListTag = currentList.type;
-        blocks.push(
-          <ListTag key={`list-${key}`}>
-            {currentList.items.map((item, itemIdx) => (
-              <li key={itemIdx}>
-                {parseInlineMarkdown(item)}
-              </li>
-            ))}
-          </ListTag>
-        );
-        currentList = null;
-      }
-    };
-
-    // Zatwierdzenie wszystkich otwartych bloków
-    const flushAll = (key) => {
-      flushParagraph(key);
-      flushList(key);
-    };
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const trimmed = line.trim();
-
-      // Pusta linia oznacza koniec bloku
-      if (trimmed === "") {
-        flushAll(i);
-        continue;
-      }
-
-      // 1. Nagłówki H1
-      if (trimmed.startsWith("# ")) {
-        flushAll(i);
-        blocks.push(
-          <h1 key={`h1-${i}`}>
-            {parseInlineMarkdown(trimmed.replace(/^#\s+/, ""))}
-          </h1>
-        );
-      }
-      // 2. Nagłówki H2
-      else if (trimmed.startsWith("## ")) {
-        flushAll(i);
-        blocks.push(
-          <h2 key={`h2-${i}`}>
-            {parseInlineMarkdown(trimmed.replace(/^##\s+/, ""))}
-          </h2>
-        );
-      }
-      // 3. Nagłówki H3
-      else if (trimmed.startsWith("### ")) {
-        flushAll(i);
-        blocks.push(
-          <h3 key={`h3-${i}`}>
-            {parseInlineMarkdown(trimmed.replace(/^###\s+/, ""))}
-          </h3>
-        );
-      } 
-      // 4. Elementy listy nienumerowanej (- lub *)
-      else if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
-        flushParagraph(i);
-        const itemContent = trimmed.replace(/^[-*]\s+/, "");
-        if (currentList && currentList.type === "ul") {
-          currentList.items.push(itemContent);
-        } else {
-          flushList(i);
-          currentList = { type: "ul", items: [itemContent] };
-        }
-      } 
-      // 5. Elementy listy numerowanej (np. 1., 2.)
-      else if (/^\d+\.\s+/.test(trimmed)) {
-        flushParagraph(i);
-        const itemContent = trimmed.replace(/^\d+\.\s+/, "");
-        if (currentList && currentList.type === "ol") {
-          currentList.items.push(itemContent);
-        } else {
-          flushList(i);
-          currentList = { type: "ol", items: [itemContent] };
-        }
-      } 
-      // 6. Zwykłe linie tekstu (akapit)
-      else {
-        flushList(i);
-        currentParagraphLines.push(trimmed);
-      }
-    }
-
-    // Wyczyszczenie i zapisanie pozostałości na końcu tekstu
-    flushAll(lines.length);
-    return blocks;
-  };
-
-  // Helper do procesowania stylów wewnątrzblokowych (pogrubienie **, kod `)
-  const parseInlineMarkdown = (text) => {
-    let parts = [text];
-
-    // 1. Przetwarzanie pogrubienia (**tekst**)
-    parts = parts.flatMap(part => {
-      if (typeof part !== 'string') return part;
-      const regex = /\*\*(.*?)\*\*/g;
-      const subParts = [];
-      let lastIndex = 0;
-      let match;
-      
-      while ((match = regex.exec(part)) !== null) {
-        if (match.index > lastIndex) {
-          subParts.push(part.substring(lastIndex, match.index));
-        }
-        subParts.push(<strong key={match.index}>{match[1]}</strong>);
-        lastIndex = regex.lastIndex;
-      }
-      if (lastIndex < part.length) {
-        subParts.push(part.substring(lastIndex));
-      }
-      return subParts;
-    });
-
-    // 2. Przetwarzanie bloków kodu (`kod`)
-    parts = parts.flatMap(part => {
-      if (typeof part !== 'string') return part;
-      const regex = /`(.*?)`/g;
-      const subParts = [];
-      let lastIndex = 0;
-      let match;
-
-      while ((match = regex.exec(part)) !== null) {
-        if (match.index > lastIndex) {
-          subParts.push(part.substring(lastIndex, match.index));
-        }
-        subParts.push(<code key={match.index}>{match[1]}</code>);
-        lastIndex = regex.lastIndex;
-      }
-      if (lastIndex < part.length) {
-        subParts.push(part.substring(lastIndex));
-      }
-      return subParts;
-    });
-
-    return parts;
   };
 
   // Ekran pusty w przypadku braku przeprowadzonego benchmarku
@@ -190,7 +69,7 @@ export default function AIAnalyst({ currentRun }) {
         <div className="empty-icon">📊</div>
         <h2>Brak aktywnych danych z testów</h2>
         <p style={{ marginTop: "8px", color: "var(--text-secondary)" }}>
-          Przejdź do zakładki <strong>Uruchom testy</strong> i wykonaj testy, aby wygenerować raport AI.
+          Przejdź do zakładki <strong>Uruchom testy</strong> i wykonaj testy, aby wyświetlić szczegółowe wyniki.
         </p>
       </div>
     );
@@ -201,29 +80,19 @@ export default function AIAnalyst({ currentRun }) {
       <div className="report-panel glass-panel">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
           <div>
-            <span style={{ fontSize: "12px", textTransform: "uppercase", letterSpacing: "1px", color: "var(--accent-purple)", fontWeight: "bold" }}>
-              Raport analityka
+            <span style={{ fontSize: "12px", textTransform: "uppercase", letterSpacing: "1px", color: "var(--accent-cyan)", fontWeight: "bold" }}>
+              Wyniki pomiarów
             </span>
-            <h2 style={{ fontSize: "22px", fontWeight: "800", marginTop: "4px" }}>Ekspercka ocena wydajności AI</h2>
+            <h2 style={{ fontSize: "22px", fontWeight: "800", marginTop: "4px" }}>Szczegółowe wyniki testu</h2>
           </div>
           <button className="btn btn-secondary" onClick={downloadReport}>
-            📥 Eksportuj Markdown
+            📥 Eksportuj wyniki (Markdown)
           </button>
         </div>
-        
-        {/* Renderowanie przeliterowanego dokumentu Markdown */}
-        <div className="markdown-body">
-          {parseMarkdown(currentRun.ai_report)}
-        </div>
 
-        {/* Jeżeli test Ollama powiódł się, dołączamy pod spodem wyniki pomiarów oraz analizę pamięci i warstw */}
         {currentRun.results?.ollama && !currentRun.results.ollama.error && currentRun.results.ollama.tokens_per_sec > 0 && (
-          <div style={{ marginTop: "40px", borderTop: "1px solid var(--border-color)", paddingTop: "30px" }}>
-            <h3 style={{ fontSize: "16px", fontWeight: "800", marginBottom: "16px", color: "var(--accent-cyan)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-              Szczegółowe wyniki pomiarów wydajności
-            </h3>
-
-            {/* Tabela metryk — identyczny układ jak w BenchmarkPanel */}
+          <div style={{ marginTop: "12px" }}>
+            {/* Tabela metryk */}
             <div style={{ overflowX: "auto", marginBottom: "30px" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", fontFamily: "var(--font-mono)" }}>
                 <thead>

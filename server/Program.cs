@@ -190,28 +190,6 @@ app.MapPost("/api/benchmark/run-stream", async (
             };
         }
 
-        // Krok 2: Generowanie raportu analizy wydajności przez sztuczną inteligencję (AI)
-        string aiReport = "";
-        bool ollamaRunningForReport = await ollama.IsOllamaRunningAsync();
-        if (!string.IsNullOrEmpty(request.Model) && ollamaRunningForReport)
-        {
-            await SendSseEvent("report", "Generowanie eksperckiego raportu wydajności AI przez Ollama...", 70);
-            await Task.Delay(100);
-            try
-            {
-                aiReport = await ollama.GenerateAiReportAsync(specs, results, request.Model, request.Complexity);
-            }
-            catch (Exception ex)
-            {
-                app.Logger.LogError(ex, "Generowanie raportu AI zakończone niepowodzeniem");
-                aiReport = $"### Ocena Wydajności Wnioskowania AI\n\nBłąd podczas generowania raportu przez Ollama: {ex.Message}\n\nSpecyfikacja:\n- CPU: {specs.CpuModel}\n- RAM: {specs.RamTotalGb} GB\n- GPU: {string.Join(", ", specs.Gpus)}";
-            }
-        }
-        else
-        {
-            aiReport = "### Ocena Wydajności Wnioskowania AI\n\nRaport analizy AI został pominięty. Upewnij się, że Ollama działa i wybrano model, aby wygenerować szczegółowe analizy AI.";
-        }
-
         // Przygotowanie końcowych danych z przebiegu testu
         var finalRunData = new BenchmarkRun
         {
@@ -219,7 +197,7 @@ app.MapPost("/api/benchmark/run-stream", async (
             Timestamp = DateTime.Now.ToString("o"),
             Specs = specs,
             Results = results,
-            AiReport = aiReport,
+            AiReport = string.Empty,
             SelectedModel = request.Model ?? "Brak",
             Complexity = request.Complexity
         };
