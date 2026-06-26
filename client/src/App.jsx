@@ -17,10 +17,11 @@ export default function App() {
   const [liveMetrics, setLiveMetrics] = useState(null); // Dynamiczne metryki obciążenia CPU/RAM pobrane na starcie
   const [ollamaActive, setOllamaActive] = useState(false); // Czy lokalne API Ollama jest aktywne
   const [models, setModels] = useState([]); // Lista dostępnych modeli w usłudze Ollama
-  
+
   const [activeRun, setActiveRun] = useState(null); // Aktualnie przeglądany przebieg benchmarku (do wyświetlenia w Dashboard/AIAnalyst)
   const [backendError, setBackendError] = useState(false); // Flaga informująca o braku połączenia z backendem .NET
   const [loading, setLoading] = useState(true); // Status ładowania początkowych danych aplikacji
+  const [showAuthorsModal, setShowAuthorsModal] = useState(false); // Widoczność okna modalnego z autorami
 
   // Funkcja pobierająca wstępne dane przy uruchomieniu aplikacji (specyfikację sprzętową, status Ollamy i historię z przeglądarki)
   const fetchInitialData = async () => {
@@ -41,7 +42,7 @@ export default function App() {
         setOllamaActive(ollamaData.ollama_active);
         setModels(ollamaData.models);
       }
-      
+
       // 3. Odczytywanie historii testów z pamięci lokalnej przeglądarki (localStorage)
       try {
         const localData = localStorage.getItem("projekt_ai_history");
@@ -121,7 +122,7 @@ export default function App() {
     } catch (e) {
       console.error("Nie udało się zapisać przebiegu testu w localStorage:", e);
     }
-    
+
     // Ustawiamy ten bieg jako aktywny i przełączamy automatycznie na kartę szczegółowych wyników
     setActiveRun(completedRun);
     setActiveTab("analysis");
@@ -147,11 +148,11 @@ export default function App() {
   return (
     <div className="app-container">
       {/* Panel boczny nawigacji */}
-      <Sidebar 
-        activeTab={activeTab} 
-        onTabChange={setActiveTab} 
-        ollamaActive={ollamaActive} 
-        modelsCount={models.length} 
+      <Sidebar
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        ollamaActive={ollamaActive}
+        modelsCount={models.length}
       />
 
       {/* Główna sekcja zawartości strony */}
@@ -173,28 +174,33 @@ export default function App() {
               {activeTab === "history" && "Przeglądaj historię wyników, eksportuj i usuwaj wpisy."}
             </span>
           </div>
+          {activeTab === "dashboard" && (
+            <button className="btn btn-secondary" onClick={() => setShowAuthorsModal(true)}>
+              Autorzy
+            </button>
+          )}
         </header>
 
         {/* Renderowanie poszczególnych widoków w zależności od wybranej zakładki */}
         {activeTab === "dashboard" && (
-          <Dashboard 
-            specs={specs} 
-            liveMetrics={liveMetrics} 
-            onRunBenchmarkTab={() => setActiveTab("benchmark")} 
+          <Dashboard
+            specs={specs}
+            liveMetrics={liveMetrics}
+            onRunBenchmarkTab={() => setActiveTab("benchmark")}
           />
         )}
 
         {activeTab === "benchmark" && (
-          <BenchmarkPanel 
-            ollamaActive={ollamaActive} 
-            models={models} 
-            onBenchmarkComplete={handleBenchmarkComplete} 
+          <BenchmarkPanel
+            ollamaActive={ollamaActive}
+            models={models}
+            onBenchmarkComplete={handleBenchmarkComplete}
           />
         )}
 
         {activeTab === "analysis" && (
-          <AIAnalyst 
-            currentRun={activeRun} 
+          <AIAnalyst
+            currentRun={activeRun}
           />
         )}
 
@@ -203,12 +209,49 @@ export default function App() {
         )}
 
         {activeTab === "history" && (
-          <HistoryPanel 
-            onSelectRun={handleSelectHistoryRun} 
-            activeRunId={activeRun?.id} 
+          <HistoryPanel
+            onSelectRun={handleSelectHistoryRun}
+            activeRunId={activeRun?.id}
           />
         )}
       </main>
+
+      {/* Okno modalne z listą autorów */}
+      {showAuthorsModal && (
+        <div className="modal-overlay" onClick={() => setShowAuthorsModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title"> Autorzy Projektu</span>
+              <button className="modal-close-btn" onClick={() => setShowAuthorsModal(false)}>×</button>
+            </div>
+            <ul className="authors-list">
+              <li className="author-item">
+                <div className="author-avatar">MK</div>
+                <span className="author-name">Michał Korba</span>
+              </li>
+              <li className="author-item">
+                <div className="author-avatar">HG</div>
+                <span className="author-name">Hanna Gościniak</span>
+              </li>
+              <li className="author-item">
+                <div className="author-avatar">DP</div>
+                <span className="author-name">Dominik Pryca</span>
+              </li>
+              <li className="author-item">
+                <div className="author-avatar">FK</div>
+                <span className="author-name">Filip Kaczor</span>
+              </li>
+              <li className="author-item">
+                <div className="author-avatar">MH</div>
+                <span className="author-name">Mikołaj Hejnosz</span>
+              </li>
+            </ul>
+            <button className="btn btn-secondary" style={{ width: "100%", justifyContent: "center" }} onClick={() => setShowAuthorsModal(false)}>
+              Zamknij
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
