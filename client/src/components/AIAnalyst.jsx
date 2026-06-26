@@ -138,6 +138,13 @@ ${o?.response || ""}
                     value={currentRun.results.ollama.prompt_eval_duration_sec} 
                   />
                   <MetricRow 
+                    label="latency / TTFT (Opóźnienie do pierwszego tokenu)" 
+                    description="Czas upływający do wygenerowania pierwszego tokenu (suma czasu ładowania i przetwarzania promptu)."
+                    interpretation="less_better"
+                    unit="s" 
+                    value={currentRun.results.ollama.latency_sec} 
+                  />
+                  <MetricRow 
                     label="prompt eval rate (Szybkość czytania pytania)" 
                     description="Prędkość przetwarzania tekstu wejściowego (promptu) przez model."
                     interpretation="more_better"
